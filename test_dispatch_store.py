@@ -91,10 +91,13 @@ class DispatchStoreTests(unittest.TestCase):
         import os
         import server
         from unittest.mock import patch
-        with patch.dict(os.environ, {"MCP_AUTO_SEND_ENABLED": "1"}):
-            with patch("dispatch_store.claim_once", side_effect=AssertionError("should not claim")):
-                outcome = json.loads(server.claim_guarded_probe(None))
-        self.assertEqual(outcome, {"granted": False, "reason": "target_unverified"})
+        for flag, expected in (("0", "disabled"), ("1", "target_unverified")):
+            with self.subTest(flag=flag):
+                with patch.dict(os.environ, {"MCP_AUTO_SEND_ENABLED": flag}):
+                    with patch("dispatch_store.claim_once", side_effect=AssertionError("should not claim")):
+                        with patch("sqlite3.connect", side_effect=AssertionError("should not touch DB")):
+                            outcome = json.loads(server.claim_guarded_probe(None))
+                self.assertEqual(outcome, {"granted": False, "reason": expected})
 
     def test_internal_tools_have_no_ui_resource(self):
         import server
