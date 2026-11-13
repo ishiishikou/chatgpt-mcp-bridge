@@ -103,14 +103,19 @@ apps.add_html_resource(AUTO_URI, AUTO_HTML, title="Automatic message probe RETIR
 # Fresh, independently named UI (never reuses cached legacy auto.html).
 # Explicit environment opt-in is required to grant the first claim.
 import json
-from dispatch_store import claim_once, report_result, get_status
+from dispatch_store import report_result, get_status
 GUARDED_EVENT_ID = "probe-20261113-v2"
 GUARDED_URI = "ui://chatgpt-event-probe/guarded-v2.html"
 GUARDED_HTML = Path(__file__).with_name("guarded-probe.html").read_text(encoding="utf-8")
 
 def claim_guarded_probe(ctx: Context) -> str:
-    enabled = os.environ.get("MCP_AUTO_SEND_ENABLED") == "1"
-    return json.dumps(claim_once(GUARDED_EVENT_ID, enabled=enabled))
+    # FAIL CLOSED until ChatGPT can attest the intended recipient thread AND
+    # atomically bind ui/message to it. An environment flag, an app instance,
+    # or client-provided hostContext must never authorize cross-chat delivery.
+    # No ledger claim is attempted, even if MCP_AUTO_SEND_ENABLED=1.
+    if os.environ.get("MCP_AUTO_SEND_ENABLED") != "1":
+        return json.dumps({"granted": False, "reason": "disabled"})
+    return json.dumps({"granted": False, "reason": "target_unverified"})
 
 def report_guarded_probe(ctx: Context, token: str, outcome: str) -> str:
     return json.dumps(report_result(GUARDED_EVENT_ID, token, outcome))
