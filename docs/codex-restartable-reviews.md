@@ -90,6 +90,16 @@ per attempt. The plan hashes the exact prompt bytes and stage configuration:
 editing a prompt invalidates resume; start an explicitly new plan state
 instead of silently reusing the earlier result.
 
+Before spawning each stage, the supervisor durably stores a random
+32-character stage token and passes it through the wrapper and Codex child's
+environment. When restarting, it checks both the saved runner PID and the
+token in the Linux /proc environment of same-UID processes. This also covers
+the tiny window where a process has started but its PID was not yet saved,
+and catches a surviving inner Codex after its parent exits. If a process is
+still active **or its status cannot be read**, the retry is rejected.
+The underlying runner verifies the exact expected SHA-256 against the prompt
+bytes it actually loaded, closing the manifest-validation-to-execution race.
+
 When the supervisor restarts, it checks previously recorded completed-stage
 proof; it may recover a fully completed stage without executing Codex again.
 An incomplete stage is never silently retried; the explicit
