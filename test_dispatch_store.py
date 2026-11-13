@@ -87,6 +87,15 @@ class DispatchStoreTests(unittest.TestCase):
                 os.environ["MCP_AUTO_SEND_ENABLED"] = previous
 
 
+    def test_server_env_flag_cannot_authorize_unbound_recipient(self):
+        import os
+        import server
+        from unittest.mock import patch
+        with patch.dict(os.environ, {"MCP_AUTO_SEND_ENABLED": "1"}):
+            with patch("dispatch_store.claim_once", side_effect=AssertionError("should not claim")):
+                outcome = json.loads(server.claim_guarded_probe(None))
+        self.assertEqual(outcome, {"granted": False, "reason": "target_unverified"})
+
     def test_internal_tools_have_no_ui_resource(self):
         import server
         tools = {tool.name: tool for tool in server.mcp._tool_manager.list_tools()}
