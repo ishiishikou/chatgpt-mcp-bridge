@@ -29,6 +29,11 @@ The operator can cancel an `authorized` or `queued` event. After `claimed`, canc
 
 `host_accepted` is **not proof of an assistant reply or external delivery**. The model-mediated fixed response receipt from PR #7 is a *separate* unverified step.
 
+Remaining LIVE-specific caveats identified in the independent second-pass review:
+- Persisted TTLs use a wall clock. A clock rollback could extend validity; a production deployment needs a documented clock/skew/fail-closed policy. Expiry checked at claim does not bound how long the later UI operation may take.
+- A verified identity is resolved before waiting for the SQLite write lock. Revocation during that wait is not independently rechecked. Future transport integration must define revocation guarantees.
+- Two eligible devices sharing one ledger and owner/session compete atomically for one claim, **not** one claim per device; separate databases cannot coordinate de-duplication. A host instance/subject binding policy is still needed.
+
 External event messages are untrusted input. A future UI must conspicuously mark them as external, must not obey embedded prompts to exfiltrate context, and must not forward private conversation content to external agents without separate user consent.
 
 ## Offline verification
