@@ -95,6 +95,15 @@ class DispatchStoreTests(unittest.TestCase):
         self.assertEqual(tools["show_auto_probe"].meta["ui"]["resourceUri"],
                          "ui://chatgpt-event-probe/auto.html")
 
+    def test_lifecycle_widget_is_separate_and_display_only(self):
+        import server
+        tools = {tool.name: tool for tool in server.mcp._tool_manager.list_tools()}
+        self.assertEqual(tools["show_lifecycle_probe"].meta["ui"]["resourceUri"],
+                         "ui://chatgpt-event-probe/lifecycle-display-v1.html")
+        source = Path(__file__).with_name("lifecycle-display-v1.html").read_text()
+        for forbidden in ("ui/message", "tools/call", "setTimeout", "setInterval", "fetch("):
+            self.assertNotIn(forbidden, source)
+
     def test_cross_process_concurrent_claims_are_atomic(self):
         initialize_database(self.path)
         code = ("import json,sys; from pathlib import Path; "
