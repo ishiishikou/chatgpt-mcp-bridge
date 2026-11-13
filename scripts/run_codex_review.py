@@ -2,6 +2,7 @@
 """Run read-only Codex with closed stdin, bounded execution and local private audit logs."""
 import argparse
 import datetime
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -59,7 +60,8 @@ def main():
     a = parser.parse_args()
     if not 10 <= a.timeout <= 240 or not re.fullmatch(r"[A-Za-z0-9_-]{1,50}", a.label):
         parser.error("timeout 10..240 and alphanumeric label required")
-    prompt = a.prompt_file.read_text(encoding="utf-8").strip()
+    raw_prompt = a.prompt_file.read_bytes()
+    prompt = raw_prompt.decode("utf-8").strip()
     if not prompt:
         parser.error("empty prompt")
     LOGS.mkdir(mode=0o700, exist_ok=True)
@@ -76,9 +78,21 @@ def main():
         "started_at": now(), "model_requested": "gpt-6.1-sol",
         "effort_requested": "max", "sandbox_requested": "read-only",
         "stdin": "DEVNULL", "timeout_seconds": a.timeout,
+        "prompt_sha256": hashlib.sha256(raw_prompt).hexdigest(),
         "cli_version": None,
     }
     start = time.monotonic()
+    proc = None
+    external_signal = None
+
+    def on_interrupt(signum, _frame):
+        nonlocal external_signal
+        external_signal = signum
+        raise InterruptedError("review_supervisor_interrupted")
+
+    old_handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+    for sig in old_handlers:
+        signal.signal(sig, on_interrupt)
     try:
         version = subprocess.run(["codex", "--version"], capture_output=True,
                                  text=True, timeout=10)
@@ -104,9 +118,30 @@ def main():
             metadata["return_code"] = code
             metadata["signal"] = -code if code < 0 else None
     except Exception as exc:
-        metadata["termination"] = "wrapper_error"
+        metadata["termination"] = (
+            "external_interrupt" if external_signal is not None else "wrapper_error"
+        )
         metadata["exception_class"] = type(exc).__name__
+        if external_signal is not None:
+            metadata["external_signal"] = external_signal
+        if proc is not None and proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGINT)
+                proc.wait(timeout=8)
+            except (OSError, subprocess.TimeoutExpired):
+                if proc.poll() is None:
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        proc.wait(timeout=8)
+                    except subprocess.TimeoutExpired:
+                        metadata["child_cleanup_unconfirmed"] = True
+            metadata["return_code"] = proc.poll()
     finally:
+        for sig, previous in old_handlers.items():
+            signal.signal(sig, previous)
         metadata["finished_at"] = now()
         metadata["duration_seconds"] = round(time.monotonic() - start, 3)
         f = folder / "final.txt"
