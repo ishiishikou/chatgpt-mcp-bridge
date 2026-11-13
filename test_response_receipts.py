@@ -120,6 +120,12 @@ class ReceiptTests(unittest.TestCase):
             initialize_receipts(unsafe / "bad.sqlite3")
         self.assertFalse((unsafe / "bad.sqlite3").exists())
 
+    def test_database_reopened_with_insecure_mode_fails_closed(self):
+        initialize_receipts(self.path)
+        self.prepare()
+        self.path.chmod(0o644)
+        self.assertEqual(self.receive()["reason"], "ledger_unavailable")
+
     def test_symlink_database_rejected(self):
         link = self.path.parent / "link.sqlite3"
         link.symlink_to(self.path)
