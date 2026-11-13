@@ -16,8 +16,9 @@ diagram in `docs/architecture-and-validation.md`:
 | `client.py` | `EventClient` + durable local `Outbox`. One enqueue attempt per event; ambiguous results become `enqueue_unknown` and are never resent automatically. |
 | `identity.py` | Server-side identity resolvers. Identity is derived only from transport context: a bearer token resolved against an operator-provisioned registry (SHA-256 digests, file mode 0600), or Tailscale peer metadata (user + device) resolved against an operator-provisioned mapping. |
 | `shim.py` | `BridgeShim`: the narrow server-side surface a client may call — `enqueue`, `cancel`, `status`, `receipt_status`. `authorize`, `claim`, `report` are deliberately not exposed. Payloads carrying identity fields are rejected fail-closed. A JSON-lines stdio host loop rejects any request line that tries to inject a `context`. |
-| `test_claude_client.py` | 12 offline tests against a faithful in-memory double of the PR #9 queue semantics. |
+| `test_claude_client.py` | 14 offline tests against a faithful in-memory double of the PR #9 queue semantics. |
 | `test_event_queue_integration.py` | 2 integration tests against the real `event_queue.py` from PR #9 (skipped until that module is importable, e.g. after PR #9 merges). |
+| `test_receipt_integration.py` | 1 integration test against the real `response_receipts.py` from PR #7 (prepare -> record fixed ack -> client reads `received`; a different principal is rejected). |
 
 ## Flow
 
@@ -53,10 +54,15 @@ cancel(event_id) ---- before claim only; after claim it is too late
   (creating the `authorized` row) stays a separate operator step, so a
   compromised client alone cannot mint sendable events.
 - **Deduplication.** Three layers: the client generates one event_id per
-  prepared message and records the attempt in its own outbox before/after
-  the single transport call; the queue keys rows by event_id primary key;
-  claim is at-most-once in the durable bridge ledger. A second `send()` for
-  the same event_id returns `already_attempted` without any transport call.
+  prepared message and claims the single attempt in its own outbox with an
+  atomic write-ahead transition (`prepared -> attempting`) *before* the
+  transport call, so a crash mid-send or a concurrent caller cannot produce
+  a second attempt; the queue keys rows by event_id primary key; claim is
+  at-most-once in the durable bridge ledger. A second `send()` for the same
+  event_id returns `already_attempted` without any transport call. (The
+  write-ahead ordering was added after an independent Codex review pointed
+  out that recording the outcome only after the transport call left a
+  crash/concurrency hole; regression tests cover both cases.)
 - **Expiry and cancellation.** TTL is bounded by the queue (<= 300 s);
   expired events cannot be enqueued or claimed. Cancellation works only in
   `authorized`/`queued` states; after a claim, cancellation is impossible
@@ -72,15 +78,16 @@ cancel(event_id) ---- before claim only; after claim it is too late
 
 ## Verification (2026-11-13, offline)
 
-- `python -m unittest claude_client.test_claude_client`: **12 passed**
-  (Muse VM; happy path, no-retry after rejection/unknown, forged-token and
-  payload-identity rejection, client-surface restrictions, cancel timing,
-  expiry, global cap, byte limit, stdio context injection, Tailscale
-  resolver binding).
-- With the real PR #9 `event_queue.py` (run inside the rdc-codex container
-  against a temporary SQLite ledger): **14 passed**, including both
-  integration tests (full flow; source binding rejects a `codex`-bound
-  identity enqueueing a `muse`-authorized event).
+- `python -m unittest discover -s claude_client`: **14 unit tests passed**
+  (Muse VM; happy path, no-retry after rejection/unknown, crash-after-send
+  and concurrent-send regression tests, forged-token and payload-identity
+  rejection, client-surface restrictions, cancel timing, expiry, global
+  cap, byte limit, stdio context injection, Tailscale resolver binding).
+- With the real PR #9 `event_queue.py` and PR #7 `response_receipts.py`
+  (run inside the rdc-codex container against temporary SQLite ledgers):
+  **17 passed**, including all three integration tests (queue full flow;
+  source binding rejects a `codex`-bound identity enqueueing a
+  `muse`-authorized event; receipt round trip with principal binding).
 
 ## What is still missing before any live step (Gate F)
 

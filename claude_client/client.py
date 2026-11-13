@@ -5,8 +5,11 @@ Flow (per event):
 1. ``prepare(message)``  -- allocate an event_id and record it locally.
 2. A trusted operator on the bridge side authorizes that exact event_id
    (queue ``authorize``; never callable from this client).
-3. ``send(event_id)``     -- exactly ONE enqueue attempt. If the transport
-   result is ambiguous (exception/timeout), the event is recorded as
+3. ``send(event_id)``     -- exactly ONE enqueue attempt. The attempt is
+   recorded in the outbox *before* the transport call (write-ahead, atomic
+   state transition), so even a crash or a concurrent caller cannot produce
+   a second attempt for the same event_id. If the transport result is
+   ambiguous (exception/timeout), the event is recorded as
    ``enqueue_unknown`` and is never resent automatically; a human decides.
 4. ``status(event_id)``   -- read queue status (read-only, repeatable).
 5. ``cancel(event_id)``   -- allowed only before the UI claims the event.
@@ -27,8 +30,6 @@ import uuid
 
 MAX_MESSAGE_BYTES = 768  # Must match the bridge queue limit (PR #9).
 MAX_TTL_SECONDS = 300
-
-_TERMINAL = frozenset({"queued", "enqueue_unknown", "rejected", "cancelled"})
 
 
 class LocalTransport:
@@ -109,6 +110,21 @@ class Outbox:
             db.execute("UPDATE outbox SET state=?,detail=?,updated_at=? WHERE event_id=?",
                        (state, detail, int(time.time()), event_id))
 
+    def try_begin_attempt(self, event_id):
+        """Atomically claim the single enqueue attempt (write-ahead).
+
+        Transitions ``prepared -> attempting`` only if the row is still
+        ``prepared``. Returns True for exactly one caller, including under
+        concurrency; everyone else (and any later retry after a crash that
+        left the row in ``attempting``) gets False.
+        """
+        with closing(self._connect()) as db, db:
+            cur = db.execute(
+                "UPDATE outbox SET state='attempting',updated_at=? "
+                "WHERE event_id=? AND state='prepared'",
+                (int(time.time()), event_id))
+            return cur.rowcount == 1
+
 
 class EventClient:
     """One-shot, no-retry client. ``transport`` is any object with
@@ -136,6 +152,11 @@ class EventClient:
             # event_id. Never place a second enqueue attempt automatically.
             return {"sent": False, "reason": "already_attempted",
                     "state": record["state"]}
+        if not self._outbox.try_begin_attempt(event_id):
+            # Lost the atomic claim: a concurrent caller owns the attempt,
+            # or a previous attempt was interrupted mid-flight.
+            return {"sent": False, "reason": "already_attempted",
+                    "state": "attempting"}
         try:
             response = self._transport.call(
                 "enqueue", {"event_id": event_id, "message": record["message"]})

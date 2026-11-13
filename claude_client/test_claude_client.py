@@ -209,6 +209,48 @@ class ClientTestCase(unittest.TestCase):
         self.assertEqual(again["reason"], "already_attempted")
         self.assertEqual(transport.calls.count("enqueue"), 1)
 
+    def test_crash_after_transport_success_leaves_no_retry(self):
+        # The shim performs the enqueue, then the client "crashes" before it
+        # can record the outcome (BaseException, not caught by send()).
+        class CrashShim:
+            def __init__(self, inner): self._inner = inner
+            def handle(self, ctx, method, params):
+                result = self._inner.handle(ctx, method, params)
+                if method == "enqueue":
+                    raise KeyboardInterrupt("simulated crash after success")
+                return result
+        transport = LocalTransport(CrashShim(self.shim), self.ctx)
+        client = EventClient(transport, self.client._outbox)
+        event_id = client.prepare("crash test")
+        self.assertTrue(self.authorize(event_id)["authorized"])
+        with self.assertRaises(KeyboardInterrupt):
+            client.send(event_id)
+        self.assertEqual(self.queue.rows[event_id]["status"], "queued")  # server-side done
+        again = client.send(event_id)
+        self.assertEqual(again["reason"], "already_attempted")
+        self.assertEqual(transport.calls.count("enqueue"), 1)  # never resent
+
+    def test_concurrent_sends_make_exactly_one_attempt(self):
+        import threading
+        class SlowShim:
+            def __init__(self, inner): self._inner = inner
+            def handle(self, ctx, method, params):
+                if method == "enqueue":
+                    time.sleep(0.2)
+                return self._inner.handle(ctx, method, params)
+        transport = LocalTransport(SlowShim(self.shim), self.ctx)
+        clients = [EventClient(transport, self.client._outbox) for _ in range(2)]
+        event_id = clients[0].prepare("race")
+        self.assertTrue(self.authorize(event_id)["authorized"])
+        results = []
+        threads = [threading.Thread(target=lambda c=c: results.append(c.send(event_id)))
+                   for c in clients]
+        for t in threads: t.start()
+        for t in threads: t.join()
+        self.assertEqual(transport.calls.count("enqueue"), 1)
+        self.assertEqual(sum(1 for r in results if r.get("sent")), 1)
+        self.assertEqual(sum(1 for r in results if r.get("reason") == "already_attempted"), 1)
+
     def test_wrong_token_cannot_enqueue(self):
         bad_transport = LocalTransport(self.shim, {"presented_token": "wrong"})
         client = EventClient(bad_transport, self.client._outbox)
