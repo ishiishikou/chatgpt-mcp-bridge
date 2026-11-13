@@ -35,9 +35,17 @@ class ThreadEntrypointContractTests(unittest.TestCase):
             with self.subTest(keyword=keyword):
                 self.assertNotIn(keyword,code)
 
-    def test_no_runtime_state_files_created_by_import(self):
+    def test_import_performs_no_filesystem_mutation(self):
         import importlib
-        with patch("pathlib.Path.mkdir",side_effect=AssertionError("write")):
+        from contextlib import ExitStack
+        operations = (
+            "pathlib.Path.mkdir", "pathlib.Path.touch",
+            "pathlib.Path.write_bytes", "pathlib.Path.write_text",
+            "sqlite3.connect",
+        )
+        with ExitStack() as stack:
+            for operation in operations:
+                stack.enter_context(patch(operation, side_effect=AssertionError(operation)))
             importlib.reload(source)
 
 if __name__ == "__main__":
