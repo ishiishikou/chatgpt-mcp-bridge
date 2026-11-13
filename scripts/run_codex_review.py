@@ -57,10 +57,14 @@ def main():
     parser.add_argument("--prompt-file", required=True, type=Path)
     parser.add_argument("--label", default="review")
     parser.add_argument("--timeout", type=int, default=120)
+    parser.add_argument("--expected-prompt-sha256", default=None)
     a = parser.parse_args()
     if not 10 <= a.timeout <= 240 or not re.fullmatch(r"[A-Za-z0-9_-]{1,50}", a.label):
         parser.error("timeout 10..240 and alphanumeric label required")
     raw_prompt = a.prompt_file.read_bytes()
+    prompt_sha256 = hashlib.sha256(raw_prompt).hexdigest()
+    if a.expected_prompt_sha256 is not None and prompt_sha256 != a.expected_prompt_sha256:
+        parser.error("prompt content differs from locked plan SHA-256")
     prompt = raw_prompt.decode("utf-8").strip()
     if not prompt:
         parser.error("empty prompt")
@@ -78,7 +82,7 @@ def main():
         "started_at": now(), "model_requested": "gpt-6.1-sol",
         "effort_requested": "max", "sandbox_requested": "read-only",
         "stdin": "DEVNULL", "timeout_seconds": a.timeout,
-        "prompt_sha256": hashlib.sha256(raw_prompt).hexdigest(),
+        "prompt_sha256": prompt_sha256,
         "cli_version": None,
     }
     start = time.monotonic()
