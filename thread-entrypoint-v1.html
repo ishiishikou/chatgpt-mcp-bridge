@@ -35,6 +35,11 @@ dt{opacity:.7}dd{margin:0;overflow-wrap:anywhere}
   let pages=0,changes=0,initialized=false,teardown=false;
   show("instance",instance);
   show("mounted",mounted);
+  show("init","応答待ち");
+  show("binding","未提供・送信不可");
+  show("context","未取得");
+  show("teardown","未受信");
+  show("status","UI初期化中");
   show("pages",pages);
   show("visibility",changes);
   window.addEventListener("pageshow",()=>show("pages",++pages));
@@ -49,14 +54,19 @@ dt{opacity:.7}dd{margin:0;overflow-wrap:anywhere}
       if(msg.id!==undefined)parent.postMessage({jsonrpc:"2.0",id:msg.id,result:{}},"*");
       return;
     }
-    if(msg.id!==1||initialized)return;
+    if(teardown||msg.id!==1||initialized)return;
     initialized=true;
-    if(msg.error){
+    if(msg.error||!msg.result||typeof msg.result!=="object"||
+       typeof msg.result.protocolVersion!=="string"||
+       typeof msg.result.hostInfo?.name!=="string"||
+       typeof msg.result.hostCapabilities!=="object"||
+       msg.result.hostCapabilities===null){
       show("init","エラー");
-      show("status","ホスト初期化失敗。送信なし。");
+      show("status","ホスト初期化応答が不正・失敗。送信なし。");
       return;
     }
-    const context=msg.result?.hostContext||{};
+    const context=msg.result.hostContext&&typeof msg.result.hostContext==="object"?
+      msg.result.hostContext:{};
     const names=Object.keys(context)
       .filter(x=>typeof x==="string"&&x.length<=80)
       .sort().slice(0,20);
