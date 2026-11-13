@@ -22,8 +22,10 @@ jobs:
       - name: Install Python dependencies
         run: python -m pip install --disable-pip-version-check -r requirements.txt
       - name: Python tests (offline; no production ledger)
-        run: python -W error::ResourceWarning -m unittest -v test_dispatch_store.py test_lifecycle_server.py
+        run: python -W error::ResourceWarning -m unittest -v test_dispatch_store.py test_lifecycle_server.py test_thread_entrypoint_server.py
       - name: MCP Apps simulated host (offline)
         run: node test-guarded-ui-offline.cjs
       - name: Display-only lifecycle simulated host (offline)
         run: node test-lifecycle-ui-offline.cjs
+      - name: Thread entrypoint simulated host (offline)
+        run: node test-thread-entrypoint-offline.cjs
