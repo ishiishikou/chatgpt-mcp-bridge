@@ -86,6 +86,8 @@ def valid_review_report(path, expected_prompt_sha256=None):
         report = json.loads(next(x for x in reversed(lines) if x.strip()))
         folder = within_private(report["run_dir"])
         metadata = json.loads((folder / "metadata.json").read_text(encoding="utf-8"))
+        if not isinstance(metadata, dict) or not isinstance(report, dict):
+            return None
         fields = ("termination", "return_code", "final_message_present",
                   "turn_completed", "settings_verified", "thread_id")
         if any(report.get(field) != metadata.get(field) for field in fields):
@@ -121,6 +123,30 @@ def process_matches(pid):
         return b"run_codex_review.py" in cmd
     except (OSError, PermissionError):
         return False
+
+
+def stage_process_state(token, proc_root=Path("/proc")):
+    """Return alive/absent/unknown: NEVER treat unreadable own processes as gone."""
+    if not isinstance(token, str) or not re.fullmatch(r"[0-9a-f]{32}", token):
+        return "unknown"
+    expected = ("CODEX_REVIEW_STAGE_TOKEN=" + token).encode()
+    uncertain = False
+    try:
+        for process in proc_root.iterdir():
+            if not process.name.isdigit():
+                continue
+            try:
+                if process.stat().st_uid != os.getuid():
+                    continue
+                if expected in (process / "environ").read_bytes().split(bytes([0])):
+                    return "alive"
+            except FileNotFoundError:
+                continue
+            except (OSError, PermissionError):
+                uncertain = True
+    except OSError:
+        return "unknown"
+    return "unknown" if uncertain else "absent"
 
 
 def execute(steps, digest, state_dir, *, resume=False, retry=False):
@@ -171,8 +197,10 @@ def execute(steps, digest, state_dir, *, resume=False, retry=False):
                     return 2
                 continue
             if status in ("running", "failed", "unknown"):
-                if process_matches(step.get("pid")):
-                    print("previous runner still active; don't duplicate", file=sys.stderr)
+                if (process_matches(step.get("pid"))
+                        or stage_process_state(step.get("token")) != "absent"):
+                    print("prior runner/orphaned Codex active or status unknown; do not duplicate",
+                          file=sys.stderr)
                     return 2
                 recovered = valid_review_report(
                     step.get("output", ""), step["prompt_sha256"])
@@ -190,15 +218,20 @@ def execute(steps, digest, state_dir, *, resume=False, retry=False):
             attempt = step.get("attempts", 0) + 1
             out_path = state_dir / (f"{ix+1:02d}-{stage['id']}-{attempt}.jsonl")
             err_path = state_dir / (f"{ix+1:02d}-{stage['id']}-{attempt}.stderr")
+            stage_token = uuid.uuid4().hex
             step.update(status="running", attempts=attempt,
-                        output=str(out_path), pid=None)
+                        output=str(out_path), pid=None, token=stage_token)
             save(state_path, state)
             label = ("plan-" + stage["id"])[:50]
             cmd = [sys.executable, str(RUNNER), "--prompt-file", stage["prompt"],
+                   "--expected-prompt-sha256", step["prompt_sha256"],
                    "--label", label, "--timeout", str(stage["timeout"])]
             with out_path.open("w", encoding="utf-8") as out, err_path.open("w") as err:
-                proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=out,
-                                        stderr=err, cwd=ROOT, start_new_session=True)
+                proc = subprocess.Popen(
+                    cmd, stdin=subprocess.DEVNULL, stdout=out, stderr=err,
+                    cwd=ROOT, start_new_session=True,
+                    env={**os.environ, "CODEX_REVIEW_STAGE_TOKEN": stage_token},
+                )
                 step["pid"] = proc.pid
                 save(state_path, state)
                 try:
