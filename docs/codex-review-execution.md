@@ -32,6 +32,22 @@ On 2026-11-13, the instrumented runner recorded:
 
 Only the first test contacted real Codex. The synthetic exit tests did not invoke the production model, tools, UI, or MCP server.
 
+
+## Windows-native comparison (2026-11-13)
+
+A separate, managed Windows-host Codex session performed three **non-destructive** read-only startup tests:
+
+- Windows x64, PowerShell 7.6.5, Codex CLI `0.167.0-alpha.3.2` from the installed Codex application.
+- `codex --version` and `codex login status` succeeded; bundled model metadata lists `gpt-6.1-sol` and `max`. **The model was not exercised**.
+- The first run exited 1 in 0.141 seconds with SQLite code 14 / state database open failure. Configuring a writable state/log path resolved the SQLite warning, but two subsequent runs also exited 1 (2.148 seconds and 0.225 seconds).
+- All three runs failed with `failed to initialize in-process app-server client` and Windows access denied `os error 5`. Stderr also mentioned an inaccessible `.codex/tmp/arg0-windows` location. The exact denied operation was not determined.
+- All JSONL outputs were empty: no `turn.started`, model response, token counts, read-only file access, or successful termination. Do not mistake CLI/auth/model-catalog success for a completed review.
+- The tests ran from a **managed parent session**. Whether a normal interactive Windows PowerShell succeeds with the same restricted settings remains untested. No Windows permission elevation, credential changes, or sandbox bypass was authorized.
+
+**Operational conclusion:** continue using the bounded, no-tool RDC Linux runner for scoped code reviews. Keep the Windows-native route as an unvalidated fallback, not a deployed workaround for Linux `bwrap`. A future Windows comparison should first identify why app-server initialization receives access denied, or reproduce from ordinary PowerShell with `--sandbox read-only` and approval `never`; a valid outcome requires the expected response, `turn.completed`, usage metadata, and exit code 0.
+
+This comparison is based on the user-provided `WINDOWS_CODEX_HANDOFF.md` research report, not a direct rerun by this branch's author.
+
 ## Safety / release caveats
 
 - Closed stdin prevents a specific wait; it does not resolve Codex service outages or guarantee answer quality.
