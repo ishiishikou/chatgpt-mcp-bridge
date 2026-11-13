@@ -76,11 +76,15 @@ def main():
         "started_at": now(), "model_requested": "gpt-6.1-sol",
         "effort_requested": "max", "sandbox_requested": "read-only",
         "stdin": "DEVNULL", "timeout_seconds": a.timeout,
-        "cli_version": subprocess.run(["codex", "--version"], capture_output=True,
-                                       text=True, timeout=10).stdout.strip(),
+        "cli_version": None,
     }
     start = time.monotonic()
     try:
+        version = subprocess.run(["codex", "--version"], capture_output=True,
+                                 text=True, timeout=10)
+        if version.returncode != 0:
+            raise RuntimeError("codex_version_failed")
+        metadata["cli_version"] = version.stdout.strip()
         with (folder / "events.jsonl").open("w") as out, (folder / "stderr.log").open("w") as err:
             proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=out,
                                     stderr=err, cwd=ROOT, start_new_session=True)
@@ -119,9 +123,11 @@ def main():
         p.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
         os.chmod(p, 0o600)
         print(json.dumps({"run_dir": str(folder), **metadata}, ensure_ascii=False), flush=True)
-    return 0 if all((metadata["termination"] == "normal_exit", metadata["return_code"] == 0,
-                     metadata["final_message_present"], metadata["turn_completed"],
-                     metadata["settings_verified"])) else 1
+    return 0 if all((metadata.get("termination") == "normal_exit",
+                     metadata.get("return_code") == 0,
+                     metadata.get("final_message_present", False),
+                     metadata.get("turn_completed", False),
+                     metadata.get("settings_verified", False))) else 1
 
 
 if __name__ == "__main__":
