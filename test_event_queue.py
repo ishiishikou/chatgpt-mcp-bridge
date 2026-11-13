@@ -9,8 +9,31 @@ import unittest
 
 from event_queue import (
     DEFAULT_DB, MAX_MESSAGE_BYTES, OfflineEventQueue, VerifiedEventIdentity,
-    initialize_queue,
+    initialize_queue, _existing,
 )
+
+
+class _BumpClockAfterBegin:
+    """Deterministically simulate time passing while BEGIN IMMEDIATE is blocked."""
+
+    def __init__(self, real_connection, clock, timestamp):
+        self.db, self.clock, self.timestamp = real_connection, clock, timestamp
+
+    def execute(self, statement, *args):
+        cursor = self.db.execute(statement, *args)
+        if statement.strip().upper() == "BEGIN IMMEDIATE":
+            self.clock.return_value = self.timestamp
+        return cursor
+
+    def __enter__(self):
+        self.db.__enter__()
+        return self
+
+    def __exit__(self, *args):
+        return self.db.__exit__(*args)
+
+    def close(self):
+        self.db.close()
 
 
 class QueueTests(unittest.TestCase):
@@ -122,6 +145,24 @@ class QueueTests(unittest.TestCase):
         self.authorize(ttl_seconds=20)
         self.mock_time.return_value = 10020
         self.assertEqual(self.q.enqueue("muse", "event1", "x")["reason"], "expired")
+        self.assertEqual(self.q.status("host", "event1")["status"], "expired")
+
+    def test_enqueue_checks_expiry_after_write_lock(self):
+        self.authorize(ttl_seconds=10)
+        self.mock_time.return_value = 10009
+        with patch("event_queue._existing", side_effect=lambda p:
+                   _BumpClockAfterBegin(_existing(p), self.mock_time, 10010)):
+            self.assertEqual(self.q.enqueue("muse", "event1", "late")["reason"],
+                             "expired")
+        self.assertEqual(self.q.status("host", "event1")["status"], "expired")
+
+    def test_claim_checks_expiry_after_write_lock(self):
+        self.authorize(ttl_seconds=10)
+        self.assertTrue(self.q.enqueue("muse", "event1", "safe")["queued"])
+        self.mock_time.return_value = 10009
+        with patch("event_queue._existing", side_effect=lambda p:
+                   _BumpClockAfterBegin(_existing(p), self.mock_time, 10010)):
+            self.assertEqual(self.q.claim("host", "event1")["reason"], "expired")
         self.assertEqual(self.q.status("host", "event1")["status"], "expired")
 
     def test_claim_returns_exact_one_message_and_token(self):
