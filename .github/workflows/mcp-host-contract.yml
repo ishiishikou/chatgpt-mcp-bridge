@@ -1,0 +1,25 @@
+name: MCP host boundary contracts (offline only)
+on:
+  push:
+    paths:
+      - 'guarded-probe.html'
+      - 'test_host_boundary_offline.cjs'
+      - '.github/workflows/mcp-host-contract.yml'
+  pull_request:
+    paths:
+      - 'guarded-probe.html'
+      - 'test_host_boundary_offline.cjs'
+      - '.github/workflows/mcp-host-contract.yml'
+permissions:
+  contents: read
+jobs:
+  mock-host-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Simulate guarded host boundary without network or UI sending
+        run: node test_host_boundary_offline.cjs
