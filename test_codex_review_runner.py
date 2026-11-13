@@ -1,6 +1,8 @@
 """No-network unit tests for the bounded Codex wrapper (fake executable only)."""
 import json
 import os
+import signal
+import time
 from pathlib import Path
 import subprocess
 import sys
@@ -123,6 +125,25 @@ class CodexRunnerTests(unittest.TestCase):
         self.assertEqual(report["termination"], "wrapper_timeout_sigkill")
         self.assertEqual(report["signal"], 9)
         self.assertFalse(report["turn_completed"])
+
+    def test_external_termination_records_interrupt_and_cleans_child(self):
+        env = dict(self.env, FAKE_CODEX_MODE="ignore_sigint")
+        proc = subprocess.Popen(
+            [sys.executable, str(RUNNER), "--prompt-file", str(self.prompt),
+             "--label", "external-interrupt", "--timeout", "120"],
+            cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, start_new_session=True,
+        )
+        time.sleep(0.8)
+        self.assertIsNone(proc.poll(), "fake CLI should be running")
+        os.kill(proc.pid, signal.SIGTERM)
+        stdout, stderr = proc.communicate(timeout=25)
+        self.assertEqual(proc.returncode, 1, stderr)
+        report = json.loads(stdout.strip().splitlines()[-1])
+        self.assertEqual(report["termination"], "external_interrupt")
+        self.assertEqual(report["external_signal"], signal.SIGTERM)
+        self.assertFalse(report["turn_completed"])
+        self.assertFalse(report.get("child_cleanup_unconfirmed", False))
 
     def test_same_second_repeated_label_gets_unique_directories(self):
         _, first = self.execute("completed", label="same-label")
