@@ -141,7 +141,7 @@ class CodexPlanTests(unittest.TestCase):
         (self.state_dir / "state.json").write_text(json.dumps(state))
         env = dict(self.env, CODEX_REVIEW_STAGE_TOKEN=token)
         orphan = subprocess.Popen(
-            [sys.executable, "-c", "import time; time.sleep(25)"],
+            [sys.executable, "-c", "import time; time.sleep(25)", "codex-stub"],
             env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
