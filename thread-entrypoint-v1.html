@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Thread Entrypoint 安全診断 v1</title>
+<style>
+:root{font:14px/1.55 system-ui,sans-serif;color-scheme:light dark}
+body{margin:16px;max-width:720px}
+h2{font-size:18px}
+dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:5px 12px}
+dt{opacity:.7}dd{margin:0;overflow-wrap:anywhere}
+#status{padding:9px;border:1px solid #8888;border-radius:6px;white-space:pre-wrap}
+</style></head><body>
+<h2>Thread Entrypoint（表示専用 v1）</h2>
+<p>チャットごとの画面分離を検証します。送信・イベント取得・ツール操作・外部通信は行いません。</p>
+<dl>
+<dt>UIインスタンス</dt><dd id="instance"></dd>
+<dt>生成UTC</dt><dd id="mounted"></dd>
+<dt>ホスト初期化</dt><dd id="init">応答待ち</dd>
+<dt>Thread識別の証明</dt><dd id="binding">未提供・送信不可</dd>
+<dt>ホストコンテキストのキー</dt><dd id="context">未取得</dd>
+<dt>ページ表示回数</dt><dd id="pages">0</dd>
+<dt>可視性変更回数</dt><dd id="visibility">0</dd>
+<dt>終了通知</dt><dd id="teardown">未受信</dd>
+</dl>
+<p id="status">UI初期化中</p>
+<p><small>識別子が異なることはUIインスタンス分離の手掛かりですが、MCPサーバーが認証できるチャットIDを意味しません。</small></p>
+<script>
+(()=>{
+  "use strict";
+  const parent=window.parent;
+  const element=id=>document.getElementById(id);
+  const show=(id,value)=>{element(id).textContent=String(value)};
+  const instance=Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,10);
+  const mounted=new Date().toISOString();
+  let pages=0,changes=0,initialized=false,teardown=false;
+  show("instance",instance);
+  show("mounted",mounted);
+  show("pages",pages);
+  show("visibility",changes);
+  window.addEventListener("pageshow",()=>show("pages",++pages));
+  document.addEventListener("visibilitychange",()=>show("visibility",++changes));
+  window.addEventListener("message",event=>{
+    if(event.source!==parent||event.data?.jsonrpc!=="2.0")return;
+    const msg=event.data;
+    if(msg.method==="ui/resource-teardown"){
+      teardown=true;
+      show("teardown","受信");
+      show("status","終了通知済み。何も送信しません。");
+      if(msg.id!==undefined)parent.postMessage({jsonrpc:"2.0",id:msg.id,result:{}},"*");
+      return;
+    }
+    if(msg.id!==1||initialized)return;
+    initialized=true;
+    if(msg.error){
+      show("init","エラー");
+      show("status","ホスト初期化失敗。送信なし。");
+      return;
+    }
+    const context=msg.result?.hostContext||{};
+    const names=Object.keys(context)
+      .filter(x=>typeof x==="string"&&x.length<=80)
+      .sort().slice(0,20);
+    show("context",names.join(", ")||"なし");
+    show("init","成功");
+    show("binding","サーバー検証可能なThread IDは未確立");
+    show("status",teardown?"終了済み":"表示専用。UIからの送信はありません。");
+    parent.postMessage({jsonrpc:"2.0",method:"ui/notifications/initialized"},"*");
+  });
+  parent.postMessage({
+    jsonrpc:"2.0",id:1,method:"ui/initialize",
+    params:{appInfo:{name:"Thread Entrypoint Display-only Probe",version:"1.0.0"},
+      appCapabilities:{availableDisplayModes:["inline"]},protocolVersion:"2026-01-26"}
+  },"*");
+})();
+</script></body></html>
