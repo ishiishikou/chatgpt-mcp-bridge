@@ -138,6 +138,10 @@ def stage_process_state(token, proc_root=Path("/proc")):
             try:
                 if process.stat().st_uid != os.getuid():
                     continue
+                command = (process / "cmdline").read_bytes().replace(bytes([0]), b" ")
+                # Only processes plausibly belonging to the Codex review.
+                if b"codex" not in command and b"run_codex_review.py" not in command:
+                    continue
                 if expected in (process / "environ").read_bytes().split(bytes([0])):
                     return "alive"
             except FileNotFoundError:
