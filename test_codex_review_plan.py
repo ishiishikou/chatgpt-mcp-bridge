@@ -7,7 +7,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
+from scripts.run_codex_review_plan import stage_process_state
 from test_codex_review_runner import FAKE_CODEX
 
 ROOT = Path(__file__).resolve().parent
@@ -97,6 +99,14 @@ class CodexPlanTests(unittest.TestCase):
         self.prompt1.write_text("Changed scope!", encoding="utf-8")
         self.assertEqual(self.invoke("completed", "--resume").returncode, 2)
 
+    def test_corrupt_metadata_cannot_be_resumed_as_success(self):
+        self.assertEqual(self.invoke().returncode, 0)
+        state = self.state()
+        out = Path(state["steps"][0]["output"])
+        recorded = json.loads(out.read_text().splitlines()[-1])
+        (Path(recorded["run_dir"]) / "metadata.json").write_text("[]")
+        self.assertEqual(self.invoke("completed", "--resume").returncode, 2)
+
     def test_unverified_turn_completion_is_failure(self):
         a = self.invoke("missing_completed")
         self.assertEqual(a.returncode, 1)
@@ -122,6 +132,37 @@ class CodexPlanTests(unittest.TestCase):
             result = self.invoke()
             self.assertEqual(result.returncode, 2)
             self.assertIn("locked", result.stderr)
+
+    def test_orphaned_prior_stage_blocks_explicit_retry(self):
+        self.assertEqual(self.invoke("abnormal").returncode, 1)
+        state = self.state()
+        token = state["steps"][0]["token"]
+        state["steps"][0].update(status="running", pid=None)
+        (self.state_dir / "state.json").write_text(json.dumps(state))
+        env = dict(self.env, CODEX_REVIEW_STAGE_TOKEN=token)
+        orphan = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(25)"],
+            env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            result = self.invoke("completed", "--resume", "--retry-incomplete")
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("status unknown", result.stderr)
+            self.assertEqual(self.state()["steps"][0]["attempts"], 1)
+        finally:
+            orphan.terminate()
+            orphan.wait(timeout=5)
+        self.assertEqual(self.invoke("completed", "--resume",
+                                     "--retry-incomplete").returncode, 0)
+
+    def test_unreadable_process_environment_is_unknown_not_gone(self):
+        with tempfile.TemporaryDirectory(dir=RUNS, prefix="proc-fixture-") as tmp:
+            proc = Path(tmp) / "4242"
+            proc.mkdir()
+            (proc / "environ").write_bytes(b"KEY=VALUE" + bytes([0]))
+            with mock.patch("pathlib.Path.read_bytes", side_effect=PermissionError):
+                self.assertEqual(stage_process_state("a" * 32, Path(tmp)), "unknown")
 
     def test_unknown_state_does_not_auto_retry(self):
         self.assertEqual(self.invoke().returncode, 0)
