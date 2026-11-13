@@ -145,6 +145,19 @@ class CodexRunnerTests(unittest.TestCase):
         self.assertFalse(report["turn_completed"])
         self.assertFalse(report.get("child_cleanup_unconfirmed", False))
 
+    def test_expected_prompt_sha_rejects_replaced_file_before_codex(self):
+        env = dict(self.env, FAKE_CODEX_MODE="completed")
+        result = subprocess.run(
+            [sys.executable, str(RUNNER),
+             "--prompt-file", str(self.prompt),
+             "--expected-prompt-sha256", "0" * 64,
+             "--label", "sha-mismatch", "--timeout", "10"],
+            env=env, cwd=ROOT, capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("prompt content differs", result.stderr)
+        self.assertFalse((self.tmp / "codex-home" / "sessions").exists())
+
     def test_same_second_repeated_label_gets_unique_directories(self):
         _, first = self.execute("completed", label="same-label")
         _, second = self.execute("completed", label="same-label")
