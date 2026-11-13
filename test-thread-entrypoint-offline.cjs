@@ -70,6 +70,16 @@ invalidCapabilities.listeners.message({source:invalidCapabilities.parent,
 assert.equal(invalidCapabilities.value("init"),"エラー");
 assert.deepEqual(invalidCapabilities.out.map(x=>x.method),["ui/initialize"]);
 
+for(const version of ["", "2025-01-01", "unsupported"]){
+ const invalidVersion=mount(.7788);
+ invalidVersion.listeners.message({source:invalidVersion.parent,
+   data:{jsonrpc:"2.0",id:1,result:{
+     protocolVersion:version,hostInfo:{name:"host"},hostCapabilities:{}
+   }}});
+ assert.equal(invalidVersion.value("init"),"エラー");
+ assert.deepEqual(invalidVersion.out.map(x=>x.method),["ui/initialize"]);
+}
+
 const earlyTeardown=mount(.3333);
 earlyTeardown.listeners.message({source:earlyTeardown.parent,
   data:{jsonrpc:"2.0",id:90,method:"ui/resource-teardown"}});
