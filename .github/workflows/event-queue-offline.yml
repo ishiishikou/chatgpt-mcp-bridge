@@ -1,0 +1,27 @@
+name: Offline authorized event queue
+on:
+  push:
+    paths:
+      - event_queue.py
+      - test_event_queue.py
+      - docs/event-queue-offline.md
+      - .github/workflows/event-queue-offline.yml
+  pull_request:
+    paths:
+      - event_queue.py
+      - test_event_queue.py
+      - docs/event-queue-offline.md
+      - .github/workflows/event-queue-offline.yml
+permissions:
+  contents: read
+jobs:
+  offline-event-queue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Unit tests (no production DB or network)
+        run: python -W error::ResourceWarning -m unittest -v test_event_queue.py
