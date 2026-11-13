@@ -10,6 +10,7 @@ import signal
 import subprocess
 import sys
 import time
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 LOGS = ROOT / ".review-runs"
@@ -63,8 +64,11 @@ def main():
         parser.error("empty prompt")
     LOGS.mkdir(mode=0o700, exist_ok=True)
     os.chmod(LOGS, 0o700)
-    folder = LOGS / (datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + a.label)
-    folder.mkdir(mode=0o700)
+    folder = Path(tempfile.mkdtemp(
+        prefix=datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + a.label + "-",
+        dir=LOGS,
+    ))
+    os.chmod(folder, 0o700)
     cmd = ["codex", "exec", "--skip-git-repo-check", "--sandbox", "read-only",
            "--json", "-C", str(ROOT), "-m", "gpt-6.1-sol",
            "-c", 'model_reasoning_effort="max"', "-o", str(folder / "final.txt"), prompt]
@@ -115,7 +119,9 @@ def main():
         p.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
         os.chmod(p, 0o600)
         print(json.dumps({"run_dir": str(folder), **metadata}, ensure_ascii=False), flush=True)
-    return 0 if metadata["termination"] == "normal_exit" and metadata["final_message_present"] else 1
+    return 0 if all((metadata["termination"] == "normal_exit", metadata["return_code"] == 0,
+                     metadata["final_message_present"], metadata["turn_completed"],
+                     metadata["settings_verified"])) else 1
 
 
 if __name__ == "__main__":
