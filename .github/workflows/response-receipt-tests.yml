@@ -22,4 +22,4 @@ jobs:
         with:
           python-version: '3.14'
       - name: Offline SQLite receipt tests; no server
-        run: python -W error::ResourceWarning -m unittest -v test_response_receipts.py
+        run: python -W error::ResourceWarning -m unittest -v test_response_receipts.py test_response_receipt_adapter.py
