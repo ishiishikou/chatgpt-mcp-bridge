@@ -57,7 +57,7 @@ dt{opacity:.7}dd{margin:0;overflow-wrap:anywhere}
     if(teardown||msg.id!==1||initialized)return;
     initialized=true;
     if(msg.error||!msg.result||typeof msg.result!=="object"||
-       typeof msg.result.protocolVersion!=="string"||
+       msg.result.protocolVersion!=="2026-01-26"||
        typeof msg.result.hostInfo?.name!=="string"||
        typeof msg.result.hostCapabilities!=="object"||
        msg.result.hostCapabilities===null||
