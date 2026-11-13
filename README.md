@@ -6,9 +6,9 @@ ChatGPTの**通常チャット**とMCP Appsを経由した外部システムの�
 
 - MCP Appsの `ui/message` によるChatGPT通常チャットへの送信は実機で観測済み。
 - 旧自動送信UIは重複送信事故のため停止済み。**旧 `show_auto_probe` を実行しないでください。**
-- 新UI `show_guarded_probe` は、SQLiteに永続化した送信権がない限り送信しません。
+- 旧重複対策UI `show_guarded_probe` は、送信先チャットを認証できないため、環境変数を有効にしてもサーバーが送信権を拒否します。
 - 重複防止は **at-most-once attempt** です。exactly-once deliveryや応答回収は保証しません。
-- Pythonユニットテスト12件・模擬ホストテスト5件に成功。新UIのChatGPT実機動作は未確認です。
+- 初回のPython単体テスト12件・模擬ホストテスト5件に成功。以後の追加テストはCIで継続検証しています。新しいThread EntrypointのiPhone実機動作は未確認です。
 - ChatGPTの応答をMCPサーバーが自動回収する仕組みは未完成です。
 
 ## 主なファイル
@@ -22,6 +22,8 @@ ChatGPTの**通常チャット**とMCP Appsを経由した外部システムの�
 | `test_dispatch_store.py` | 送信権管理のPythonテスト |
 | `test-guarded-ui-offline.cjs` | ChatGPT非接続のUI模擬ホストテスト |
 | `SAFETY.md` | 検証履歴と安全上の制約 |
+| `thread_entrypoint_server.py` | チャット単位の表示専用UIサーバー（送信機能なし） |
+| `docs/thread-target-routing-research.md` | 宛先固定の仕様調査、代替構成、安全ゲート |
 
 ## 安全上の注意
 
