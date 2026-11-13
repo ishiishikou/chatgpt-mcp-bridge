@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ja">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MCP UI lifecycle display-only probe v1</title>
+<style>
+:root{font:14px/1.5 system-ui,sans-serif;color-scheme:light dark}
+body{margin:18px;max-width:680px}
+h2{font-size:17px;margin:0 0 12px}
+p{margin:8px 0}
+dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 12px}
+dt{opacity:.75}dd{margin:0;overflow-wrap:anywhere}
+small{opacity:.7}
+#state{border:1px solid #8888;border-radius:8px;padding:12px;white-space:pre-wrap}
+</style></head>
+<body>
+<h2>MCP UI ライフサイクル診断（表示専用 v1）</h2>
+<p>このUIは送信・サーバーツール呼び出し・タイマー・外部通信を行いません。</p>
+<dl>
+<dt>インスタンスID</dt><dd id="instance">読み込み中</dd>
+<dt>生成時刻</dt><dd id="mounted">読み込み中</dd>
+<dt>初期化</dt><dd id="initialize">応答待ち</dd>
+<dt>ホスト機能</dt><dd id="capabilities">未取得</dd>
+<dt>可視性</dt><dd id="visibility">未取得</dd>
+<dt>表示イベント</dt><dd id="visibilityCount">0</dd>
+<dt>ページ復帰</dt><dd id="pageCount">0</dd>
+<dt>終了通知</dt><dd id="teardown">未受信</dd>
+</dl>
+<p id="state">待機中（サーバーへの状態通知は行いません）</p>
+<small>別チャットで同じインスタンスIDが見える場合、表示状態の再利用が疑われます。異なるIDの場合は再生成された可能性があります。どちらも送信の証拠ではありません。</small>
+<script>
+(()=>{
+  const parent=window.parent;
+  const get=id=>document.getElementById(id);
+  const set=(id,value)=>{get(id).textContent=String(value)};
+  const instanceId=Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,10);
+  const mountedAt=new Date().toISOString();
+  let completed=false, tornDown=false, visibilityCount=0, pageCount=0;
+  set("instance",instanceId);
+  set("mounted",mountedAt);
+  const updateVisibility=()=>set("visibility",document.visibilityState||"unknown");
+  updateVisibility();
+  document.addEventListener("visibilitychange",()=>{
+    visibilityCount++;
+    set("visibilityCount",visibilityCount);
+    updateVisibility();
+  });
+  window.addEventListener("pageshow",()=>{
+    pageCount++;
+    set("pageCount",pageCount);
+  });
+  window.addEventListener("pagehide",()=>{
+    set("state","pagehideを受信（通信なし）");
+  });
+  window.addEventListener("message",event=>{
+    if(event.source!==parent||event.data?.jsonrpc!=="2.0")return;
+    const data=event.data;
+    if(data.method==="ui/resource-teardown"){
+      tornDown=true;
+      set("teardown","受信");
+      set("state","teardown（送信なし）");
+      if(data.id!==undefined){
+        parent.postMessage({jsonrpc:"2.0",id:data.id,result:{}},"*");
+      }
+      return;
+    }
+    if(data.id===1&&!completed){
+      completed=true;
+      if(data.error){
+        set("initialize","エラー");
+        set("state","ホスト初期化に失敗（送信なし）");
+        return;
+      }
+      const caps=data.result?.hostCapabilities||{};
+      set("initialize","成功");
+      set("capabilities","message.text="+Boolean(caps.message?.text)+
+        " / serverTools="+Boolean(caps.serverTools));
+      set("state",tornDown?"teardown済み":"表示専用。追加の操作はしません。");
+      parent.postMessage({jsonrpc:"2.0",method:"ui/notifications/initialized"},"*");
+    }
+  });
+  parent.postMessage({
+    jsonrpc:"2.0",id:1,method:"ui/initialize",
+    params:{appInfo:{name:"MCP Apps lifecycle display-only probe",version:"1.0.0"},
+      appCapabilities:{availableDisplayModes:["inline"]},protocolVersion:"2026-01-26"}
+  },"*");
+})();
+</script>
+</body></html>

@@ -127,7 +127,21 @@ def show_guarded_probe(ctx: Context) -> str:
 
 apps.add_html_resource(GUARDED_URI, GUARDED_HTML, title="Guarded one-time message probe v2")
 
-mcp = MCPServer("ChatGPT event widget probe", version="0.2.0", extensions=[apps])
+# A new, strictly display-only diagnostic with no message dispatch and no tools/call.
+# Distinct URI prevents accidentally reactivating cached legacy HTML.
+LIFECYCLE_URI = "ui://chatgpt-event-probe/lifecycle-display-v1.html"
+LIFECYCLE_HTML = Path(__file__).with_name("lifecycle-display-v1.html").read_text(encoding="utf-8")
+
+@apps.tool(
+    resource_uri=LIFECYCLE_URI,
+    description="Display a read-only MCP Apps lifecycle diagnostic widget. No automatic messages, no server-side tool calls, no external requests and no send timers."
+)
+def show_lifecycle_probe(ctx: Context) -> str:
+    return "Display-only lifecycle probe; it does not send messages or call server helper tools."
+
+apps.add_html_resource(LIFECYCLE_URI, LIFECYCLE_HTML, title="Lifecycle display-only probe v1")
+
+mcp = MCPServer("ChatGPT event widget probe", version="0.3.0", extensions=[apps])
 # App-only helpers have NO resourceUri: their calls must not reopen an iframe.
 # Restrict visibility to the MCP App on the same server connection.
 APP_ONLY = {"ui": {"visibility": ["app"]}}
