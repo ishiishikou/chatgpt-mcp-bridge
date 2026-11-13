@@ -18,7 +18,7 @@ This is an **operator-side diagnostic**, not a ChatGPT MCP message-delivery mech
 python3 scripts/run_codex_review.py --prompt-file .review-runs/review.txt --label security --timeout 150
 ```
 
-3. Check the private `.review-runs/YYYYMMDDTHHMMSSZ-label/` directory. `metadata.json` records the requested model/effort, process exit, wrapper timeout/forced kill, last-message presence, observed turn completion, and (when session artifacts exist) actual Codex model/effort/sandbox/approval. The raw JSONL events and stderr are kept locally, not committed. Confirm **both** `return_code=0` and `turn_completed=true`; `settings_verified=true` confirms the intended configuration.
+3. Check the private `.review-runs/YYYYMMDDTHHMMSSZ-label/` directory. `metadata.json` records the requested model/effort, process exit, wrapper timeout/forced kill, last-message presence, observed turn completion, and (when session artifacts exist) actual Codex model/effort/sandbox/approval. The raw JSONL events and stderr are kept locally, not committed. The runner returns success **only if** `return_code=0`, `final_message_present=true`, `turn_completed=true`, and `settings_verified=true`. These are checked independently of the requested CLI arguments. Run directories include unique suffixes so equal-time invocations cannot collide.
 4. For any `wrapper_timeout_sigint`/`wrapper_timeout_sigkill`, do **not** present the review as complete. For `abnormal_exit` without wrapper timeout, investigate stderr/session events. An external SIGKILL of the parent may leave only partial artifacts; do not infer a reason from missing logs.
 
 The runner hard-caps execution at 240 seconds. Avoid indefinite retries, oversized prompts, or web-search-heavy reviews. The preferred workaround for bwrap in this environment is **no-tool, inline text analysis**, not disabling sandbox security.
@@ -31,6 +31,8 @@ On 2026-11-13, the instrumented runner recorded:
 - **Synthetic** nonresponsive process (ignoring SIGINT): wrapper_timeout_sigkill, code -9, signal 9 after the wrapper's 10-second deadline and 8-second SIGINT grace period.
 
 Only the first test contacted real Codex. The synthetic exit tests did not invoke the production model, tools, UI, or MCP server.
+
+Additional offline regression tests (`test_codex_review_runner.py`, 5 cases) cover successful verified completion, exit 0 without `turn.completed`, model mismatch, nonzero process exit, and duplicate timestamp/label run-directory collisions. These tests never invoke real Codex.
 
 
 ## Windows-native comparison (2026-11-13)
