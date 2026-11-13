@@ -1,0 +1,25 @@
+name: Codex review runner (offline fake CLI)
+on:
+  push:
+    paths:
+      - 'scripts/run_codex_review.py'
+      - 'test_codex_review_runner.py'
+      - '.github/workflows/codex-review-runner.yml'
+  pull_request:
+    paths:
+      - 'scripts/run_codex_review.py'
+      - 'test_codex_review_runner.py'
+      - '.github/workflows/codex-review-runner.yml'
+permissions:
+  contents: read
+jobs:
+  fake-codex-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Mock Codex only; no model requests
+        run: python -W error::ResourceWarning -m unittest -v test_codex_review_runner.py
