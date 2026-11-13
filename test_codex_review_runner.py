@@ -18,11 +18,20 @@ import sys
 
 args = sys.argv[1:]
 if args == ["--version"]:
+    if os.environ.get("FAKE_CODEX_MODE") == "version_fail":
+        print("synthetic version failure", file=sys.stderr)
+        sys.exit(9)
     print("codex-cli FAKE-TEST")
     sys.exit(0)
 mode = os.environ["FAKE_CODEX_MODE"]
 if mode == "abnormal":
     sys.exit(7)
+if mode == "ignore_sigint":
+    import signal
+    import time
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    while True:
+        time.sleep(0.5)
 output = Path(args[args.index("-o") + 1])
 output.write_text("REVIEW_OK\n", encoding="utf-8")
 thread_id = "00000000-0000-0000-0000-00000000abcd"
@@ -66,7 +75,7 @@ class CodexRunnerTests(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, str(RUNNER), "--prompt-file", str(self.prompt),
              "--label", label, "--timeout", "10"],
-            cwd=ROOT, env=env, text=True, capture_output=True, timeout=20,
+            cwd=ROOT, env=env, text=True, capture_output=True, timeout=35,
             check=False,
         )
         self.assertTrue(result.stdout.strip(), result.stderr)
@@ -99,6 +108,21 @@ class CodexRunnerTests(unittest.TestCase):
         self.assertEqual(process.returncode, 1)
         self.assertEqual(report["return_code"], 7)
         self.assertEqual(report["termination"], "abnormal_exit")
+
+    def test_cli_preflight_failure_is_logged_not_unhandled(self):
+        process, report = self.execute("version_fail")
+        self.assertEqual(process.returncode, 1)
+        self.assertEqual(report["termination"], "wrapper_error")
+        self.assertEqual(report["exception_class"], "RuntimeError")
+        self.assertIsNone(report["cli_version"])
+        self.assertFalse(report["turn_completed"])
+
+    def test_forced_timeout_is_not_a_success(self):
+        process, report = self.execute("ignore_sigint")
+        self.assertEqual(process.returncode, 1)
+        self.assertEqual(report["termination"], "wrapper_timeout_sigkill")
+        self.assertEqual(report["signal"], 9)
+        self.assertFalse(report["turn_completed"])
 
     def test_same_second_repeated_label_gets_unique_directories(self):
         _, first = self.execute("completed", label="same-label")
