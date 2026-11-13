@@ -251,6 +251,26 @@ class ClientTestCase(unittest.TestCase):
         self.assertEqual(sum(1 for r in results if r.get("sent")), 1)
         self.assertEqual(sum(1 for r in results if r.get("reason") == "already_attempted"), 1)
 
+    def test_cancel_racing_send_never_claims_local_only(self):
+        # Simulate a send already in flight (attempt claimed) when cancel
+        # arrives: cancel must not report a local-only success.
+        event_id = self.client.prepare("race cancel")
+        self.assertTrue(self.authorize(event_id)["authorized"])
+        outbox = self.client._outbox
+        self.assertTrue(outbox.try_begin_attempt(event_id))  # send in flight
+        result = self.client.cancel(event_id)
+        self.assertNotEqual(result.get("scope"), "local_only")
+        self.assertTrue(result["cancelled"])  # bridge cancels the queued-side row
+        self.assertEqual(self.queue.rows[event_id]["status"], "cancelled")
+
+    def test_cancel_prepared_is_atomic_and_idempotent(self):
+        event_id = self.client.prepare("plain cancel")
+        first = self.client.cancel(event_id)
+        self.assertEqual(first.get("scope"), "local_only")
+        self.assertEqual(self.transport.calls.count("cancel"), 0)  # no transport use
+        second = self.client.cancel(event_id)
+        self.assertTrue(second["cancelled"] and second.get("idempotent"))
+
     def test_wrong_token_cannot_enqueue(self):
         bad_transport = LocalTransport(self.shim, {"presented_token": "wrong"})
         client = EventClient(bad_transport, self.client._outbox)

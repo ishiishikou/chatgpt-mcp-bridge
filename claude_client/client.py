@@ -110,6 +110,22 @@ class Outbox:
             db.execute("UPDATE outbox SET state=?,detail=?,updated_at=? WHERE event_id=?",
                        (state, detail, int(time.time()), event_id))
 
+    def try_cancel_prepared(self, event_id):
+        """Atomically claim a purely-local cancellation.
+
+        Transitions ``prepared -> cancelled`` only if the row is still
+        ``prepared``. If a send has already begun (``attempting``/``queued``)
+        this returns False and the caller must fall back to the bridge-side
+        cancel; reporting a local-only success after an enqueue would be a
+        false claim.
+        """
+        with closing(self._connect()) as db, db:
+            cur = db.execute(
+                "UPDATE outbox SET state='cancelled',detail='before_enqueue',"
+                "updated_at=? WHERE event_id=? AND state='prepared'",
+                (int(time.time()), event_id))
+            return cur.rowcount == 1
+
     def try_begin_attempt(self, event_id):
         """Atomically claim the single enqueue attempt (write-ahead).
 
@@ -179,9 +195,13 @@ class EventClient:
         record = self._outbox.get(event_id)
         if record is None:
             return {"cancelled": False, "reason": "unknown_event"}
-        if record["state"] == "prepared":
-            # Never enqueued: local cancellation only, no transport call.
-            self._outbox.set_state(event_id, "cancelled", "before_enqueue")
+        if record["state"] == "cancelled":
+            return {"cancelled": True, "state": "cancelled", "idempotent": True}
+        if record["state"] == "prepared" and self._outbox.try_cancel_prepared(event_id):
+            # Atomically confirmed still unenqueued: local cancellation only,
+            # no transport call. If the atomic claim fails, a send raced us —
+            # fall through to the bridge-side cancel instead of claiming a
+            # local success for an event that may already be enqueued.
             return {"cancelled": True, "state": "cancelled", "scope": "local_only"}
         response = self._transport.call("cancel", {"event_id": event_id})
         result = response.get("result") if isinstance(response, dict) else None

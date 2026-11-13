@@ -16,7 +16,7 @@ diagram in `docs/architecture-and-validation.md`:
 | `client.py` | `EventClient` + durable local `Outbox`. One enqueue attempt per event; ambiguous results become `enqueue_unknown` and are never resent automatically. |
 | `identity.py` | Server-side identity resolvers. Identity is derived only from transport context: a bearer token resolved against an operator-provisioned registry (SHA-256 digests, file mode 0600), or Tailscale peer metadata (user + device) resolved against an operator-provisioned mapping. |
 | `shim.py` | `BridgeShim`: the narrow server-side surface a client may call — `enqueue`, `cancel`, `status`, `receipt_status`. `authorize`, `claim`, `report` are deliberately not exposed. Payloads carrying identity fields are rejected fail-closed. A JSON-lines stdio host loop rejects any request line that tries to inject a `context`. |
-| `test_claude_client.py` | 14 offline tests against a faithful in-memory double of the PR #9 queue semantics. |
+| `test_claude_client.py` | 16 offline tests against a faithful in-memory double of the PR #9 queue semantics. |
 | `test_event_queue_integration.py` | 2 integration tests against the real `event_queue.py` from PR #9 (skipped until that module is importable, e.g. after PR #9 merges). |
 | `test_receipt_integration.py` | 1 integration test against the real `response_receipts.py` from PR #7 (prepare -> record fixed ack -> client reads `received`; a different principal is rejected). |
 
@@ -78,14 +78,14 @@ cancel(event_id) ---- before claim only; after claim it is too late
 
 ## Verification (2026-11-13, offline)
 
-- `python -m unittest discover -s claude_client`: **14 unit tests passed**
+- `python -m unittest discover -s claude_client`: **16 unit tests passed**
   (Muse VM; happy path, no-retry after rejection/unknown, crash-after-send
   and concurrent-send regression tests, forged-token and payload-identity
   rejection, client-surface restrictions, cancel timing, expiry, global
   cap, byte limit, stdio context injection, Tailscale resolver binding).
 - With the real PR #9 `event_queue.py` and PR #7 `response_receipts.py`
   (run inside the rdc-codex container against temporary SQLite ledgers):
-  **17 passed**, including all three integration tests (queue full flow;
+  **19 passed**, including all three integration tests (queue full flow;
   source binding rejects a `codex`-bound identity enqueueing a
   `muse`-authorized event; receipt round trip with principal binding).
 
