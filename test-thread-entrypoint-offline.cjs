@@ -62,6 +62,14 @@ malformed.listeners.message({source:malformed.parent,
 assert.equal(malformed.value("init"),"エラー");
 assert.deepEqual(malformed.out.map(x=>x.method),["ui/initialize"]);
 
+const invalidCapabilities=mount(.7777);
+invalidCapabilities.listeners.message({source:invalidCapabilities.parent,
+  data:{jsonrpc:"2.0",id:1,result:{
+    protocolVersion:"2026-01-26",hostInfo:{name:"host"},hostCapabilities:[]
+  }}});
+assert.equal(invalidCapabilities.value("init"),"エラー");
+assert.deepEqual(invalidCapabilities.out.map(x=>x.method),["ui/initialize"]);
+
 const earlyTeardown=mount(.3333);
 earlyTeardown.listeners.message({source:earlyTeardown.parent,
   data:{jsonrpc:"2.0",id:90,method:"ui/resource-teardown"}});
@@ -70,7 +78,7 @@ assert.equal(earlyTeardown.value("teardown"),"受信");
 assert.equal(earlyTeardown.value("init"),"応答待ち");
 assert.deepEqual(earlyTeardown.out.map(x=>x.method),["ui/initialize",undefined]);
 
-for(const check of [a,b,error,malformed,earlyTeardown]){
+for(const check of [a,b,error,malformed,invalidCapabilities,earlyTeardown]){
  assert.equal(check.out.some(p=>p.method==="ui/message"||p.method==="tools/call"),false);
 }
 console.log("PASS independent instance IDs, per-instance counters, and teardown");
