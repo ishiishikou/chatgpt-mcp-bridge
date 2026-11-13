@@ -141,10 +141,10 @@ class OfflineEventQueue:
                 or type(ttl_seconds) is not int
                 or not 1 <= ttl_seconds <= MAX_TTL_SECONDS):
             return {"authorized": False, "reason": "invalid_arguments"}
-        now = int(time.time())
         try:
             with closing(_existing(self._path)) as db, db:
                 db.execute("BEGIN IMMEDIATE")
+                now = int(time.time())
                 if db.execute("SELECT 1 FROM event_queue WHERE event_id=?", (event_id,)).fetchone():
                     return {"authorized": False, "reason": "duplicate"}
                 if db.execute("SELECT COUNT(*) FROM event_queue").fetchone()[0] >= MAX_TOTAL_EVENTS:
@@ -170,10 +170,10 @@ class OfflineEventQueue:
                 return {"queued": False, "reason": "invalid_arguments"}
         except UnicodeError:
             return {"queued": False, "reason": "invalid_arguments"}
-        now = int(time.time())
         try:
             with closing(_existing(self._path)) as db, db:
                 db.execute("BEGIN IMMEDIATE")
+                now = int(time.time())
                 row = db.execute(
                     "SELECT owner,session,source,status,expires_at FROM event_queue WHERE event_id=?",
                     (event_id,)).fetchone()
@@ -194,10 +194,10 @@ class OfflineEventQueue:
         identity = self._identity(trusted_context, "bridge:event:claim")
         if identity is None or not _identifier(event_id):
             return {"claimed": False, "reason": "not_authorized"}
-        now = int(time.time())
         try:
             with closing(_existing(self._path)) as db, db:
                 db.execute("BEGIN IMMEDIATE")
+                now = int(time.time())
                 row = db.execute(
                     "SELECT owner,session,status,expires_at,message FROM event_queue WHERE event_id=?",
                     (event_id,)).fetchone()
