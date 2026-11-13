@@ -51,8 +51,9 @@ def _existing(path):
     if raw_path.is_symlink():
         raise RuntimeError("Symlink receipt database path forbidden")
     path = raw_path.resolve()
-    if not path.is_file() or path.parent.stat().st_mode & 0o077:
-        raise RuntimeError("Receipt DB missing or directory not private")
+    if (not path.is_file() or path.parent.stat().st_mode & 0o077
+            or path.stat().st_mode & 0o077):
+        raise RuntimeError("Receipt DB missing or file/directory not private")
     db = sqlite3.connect(path.as_uri() + "?mode=rw", uri=True, timeout=5)
     db.execute("PRAGMA busy_timeout=5000")
     db.execute("PRAGMA synchronous=FULL")
