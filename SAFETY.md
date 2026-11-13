@@ -3,7 +3,7 @@
 ## 安全状態
 - 旧リソース `ui://chatgpt-event-probe/auto.html` と `show_auto_probe` は**使用停止**。現在のファイルは送信コードを含まない。
 - 旧チャットを開かない。ホストに保存・キャッシュされた旧HTMLは、現行ソースの修正だけでは無効化を保証できない。トンネル停止も `ui/message` の直接送信を遮断する保証にはならない。
-- `show_guarded_probe` は新規URIを使う別検証UI。既定で `MCP_AUTO_SEND_ENABLED` 未設定のため、送信権を発行しない。
+- `show_guarded_probe` は新規URIを使う別検証UI。**2026-11-13の送信先安全対策では、`MCP_AUTO_SEND_ENABLED=1` でも `claim_guarded_probe` が `target_unverified` を返し、送信権を発行しない**。サーバー検証可能な送信先認証とホストの原子的な送信先固定が成立するまでは解除しない。
 - ユーザーによる追加送信テストの明示指示が出るまで、UIの表示・MCPサーバーの起動・トンネルの再開・環境変数による送信許可を行わない。
 
 ## コード上の安全設計
@@ -30,7 +30,7 @@ cd /workspace/chatgpt-event-widget-probe
 .venv/bin/python -m py_compile server.py dispatch_store.py test_dispatch_store.py
 ```
 
-実行環境が変更されても、明示的に再開の指示を受けるまで `MCP_AUTO_SEND_ENABLED=1` を設定しない。
+**新しい実機テストの承認は、技術的な送信先固定の検証を免除しない。** 実行環境が変更されても、`MCP_AUTO_SEND_ENABLED=1` は設定しない。設定されても現行の送信権APIは拒否する。これには旧HTMLをホストがキャッシュした場合の直接 `ui/message` 呼び出しを止める効力はないため、旧チャットは開かない。
 
 ## 2026-11-13 実機検証試行（ユーザーの明示的な再開指示後）
 
