@@ -39,6 +39,8 @@ python -W error::ResourceWarning -m unittest -v test_event_queue.py
 
 No network calls, real DB, timers, process start, browser navigation, MCP servers or actual ChatGPT messages are made. Tests use temporary permission-restricted databases and cover duplicate/concurrent claims, owner/session/source mismatches, expiry, cancellations, replay, missing ledger, symlink, and wrong permissions.
 
+The expiry clock is deliberately read **after** a successful SQLite `BEGIN IMMEDIATE` lock acquisition, rather than before waiting for that lock. Regression tests simulate an expiry while the writer waits on the lock and require both enqueue and claim to be denied. This gap was identified by an independent Codex review on 2026-11-13 (model `gpt-6.1-sol`, effort `max`, verified `turn.completed` and normal process exit), then corrected and covered by two new tests. All **23** offline Python tests passed after the fix.
+
 ## Deployment gates, NOT satisfied
 
 1. Verify real MCP OAuth / signed context and narrowly scoped service identities, browser origin and chat-session binding. A trusted resolver is not yet implemented. No public auth endpoints.
