@@ -38,4 +38,13 @@ ChatGPTの**通常チャット**とMCP Appsを経由した外部システムの�
 node test-guarded-ui-offline.cjs
 ```
 
-詳細は `SAFETY.md` を参照してください。
+詳細は [`SAFETY.md`](SAFETY.md) と [`docs/architecture-and-validation.md`](docs/architecture-and-validation.md) を参照してください。
+
+CIではPython 3.14 / Node.js 24を使用し、ネットワークに接続する実機送信を一切行いません。開発環境の作成例:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m unittest -v test_dispatch_store.py
+node test-guarded-ui-offline.cjs
+```
