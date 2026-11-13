@@ -1,0 +1,48 @@
+# Never publish local credentials or runtime configuration
+.secrets/
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.pfx
+*.key
+
+# Persistent send ledger and runtime state
+state/
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+
+# Secure MCP tunnel: local profiles, binaries, diagnostics, and logs
+tunnel-profiles/
+tunnel-bin/
+tunnel-client-*.zip
+tunnel-run-*.log
+tunnel-*.log
+tunnel-*.part
+tunnel-health.url
+
+# Local execution notes that may include internal context
+codex-review-prompt.txt
+.review-runs/
+
+# Generated dependencies and build artifacts
+.venv/
+venv/
+node_modules/
+dist/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+coverage/
+
+# Temporary and system files
+*.log
+*.tmp
+*.bak
+.DS_Store
+Thumbs.db

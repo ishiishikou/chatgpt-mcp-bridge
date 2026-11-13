@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>永続重複防止付き検証UI（既定停止）</title>
+<style>body{font:14px/1.55 system-ui,sans-serif;margin:18px}h2{font-size:17px}#status{white-space:pre-wrap;padding:12px;border:1px solid #8886;border-radius:8px}</style>
+</head><body>
+<h2>重複防止付き自動送信（安全停止モード）</h2>
+<p>自動送信はサーバー管理者が明示的に許可した場合のみ行います。送信権はサーバーで永続化し、再表示時には取得できません。</p>
+<div id="status">MCPホスト初期化中</div>
+<script>
+(()=>{
+  const host=window.parent, statusEl=document.getElementById("status");
+  const inflight=new Map();
+  let seq=1, tornDown=false, timer=null, started=false;
+  const show=s=>{statusEl.textContent=s};
+  function request(method,params){
+    return new Promise((resolve,reject)=>{
+      if(tornDown)return reject(new Error("teardown"));
+      const id=seq++;
+      const timeout=setTimeout(()=>{inflight.delete(id);reject(new Error(method+" timeout; result unknown"))},12000);
+      inflight.set(id,{resolve,reject,timeout});
+      host.postMessage({jsonrpc:"2.0",id,method,params},"*");
+    });
+  }
+  function callTool(name,args={}){
+    return request("tools/call",{name,arguments:args}).then(result=>{
+      if(result?.isError)throw new Error("server tool returned isError");
+      const raw=result?.content?.find(c=>c.type==="text")?.text;
+      if(typeof raw!=="string")throw new Error("missing server JSON");
+      return JSON.parse(raw);
+    });
+  }
+  window.addEventListener("message",evt=>{
+    if(evt.source!==host||evt.data?.jsonrpc!=="2.0")return;
+    const data=evt.data;
+    if(data.method==="ui/resource-teardown"){
+      tornDown=true;
+      if(timer!==null)clearTimeout(timer);
+      for(const x of inflight.values()){clearTimeout(x.timeout);x.reject(new Error("teardown"));}
+      inflight.clear();
+      show("画面終了。送信済み状態はサーバーに残ります。");
+      if(data.id!==undefined)host.postMessage({jsonrpc:"2.0",id:data.id,result:{}},"*");
+      return;
+    }
+    if(data.id!==undefined&&inflight.has(data.id)){
+      const pending=inflight.get(data.id);
+      inflight.delete(data.id);clearTimeout(pending.timeout);
+      if(data.error)pending.reject(new Error(String(data.error.message||"host error")));
+      else pending.resolve(data.result||{});
+    }
+  });
+  async function dispatch(){
+    if(tornDown||started)return;
+    started=true;
+    let claim;
+    try {
+      // MUST claim on the persistent server BEFORE posting ui/message.
+      claim=await callTool("claim_guarded_probe");
+      if(!claim.granted){show("送信しません: "+String(claim.reason||"not granted"));return;}
+    } catch(e){show("送信しません: サーバーの重複防止判定に失敗しました。");return;}
+    if(tornDown){show("送信権取得後にUI終了。自動再試行しません。");return;}
+    show("送信権取得済み。ホストへ1回だけ送信要求中。");
+    const msg="安全な重複防止検証です。受信したら「安全送信を受信」とだけ返してください。追加のツール呼び出しはしないでください。";
+    let outcome="unknown";
+    try{
+      const result=await request("ui/message",{role:"user",content:[{type:"text",text:msg}]});
+      outcome=result?.isError?"host_rejected":"host_accepted";
+    }catch(e){outcome="unknown";}
+    // Reporting failures leave the claim irrevocably consumed: fail closed.
+    try{
+      const record=await callTool("report_guarded_probe",{token:claim.claim_token,outcome});
+      show("送信結果: "+outcome+" / サーバー記録: "+(record.recorded?"成功":"未確認")+
+           "。ホスト受理はChatGPT応答の到達保証ではありません。");
+    }catch(e){show("送信結果: "+outcome+"。結果記録の成否不明。自動再試行しません。");}
+  }
+  request("ui/initialize",{
+    appInfo:{name:"ChatGPT guarded one-shot message probe",version:"0.2.0"},
+    appCapabilities:{availableDisplayModes:["inline"]},protocolVersion:"2026-01-26"
+  }).then(init=>{
+    if(tornDown)return;
+    host.postMessage({jsonrpc:"2.0",method:"ui/notifications/initialized"},"*");
+    if(!init?.hostCapabilities?.message?.text||!init?.hostCapabilities?.serverTools){
+      show("ホスト能力不足または未確認。自動送信せず終了します。");return;
+    }
+    show("重複防止判定を待機中。サーバーが無効設定の場合、送信しません。");
+    timer=setTimeout(()=>{timer=null;dispatch()},4000);
+  }).catch(()=>show("ホスト初期化失敗。送信しません。"));
+})();
+</script></body></html>
