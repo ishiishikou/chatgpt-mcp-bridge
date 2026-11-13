@@ -1,0 +1,25 @@
+name: Response receipt research (offline only)
+on:
+  push:
+    paths:
+      - 'response_receipts.py'
+      - 'test_response_receipts.py'
+      - '.github/workflows/response-receipt-tests.yml'
+  pull_request:
+    paths:
+      - 'response_receipts.py'
+      - 'test_response_receipts.py'
+      - '.github/workflows/response-receipt-tests.yml'
+permissions:
+  contents: read
+jobs:
+  receipt-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Offline SQLite receipt tests; no server
+        run: python -W error::ResourceWarning -m unittest -v test_response_receipts.py
