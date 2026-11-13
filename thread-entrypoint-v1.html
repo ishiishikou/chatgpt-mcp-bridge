@@ -60,13 +60,14 @@ dt{opacity:.7}dd{margin:0;overflow-wrap:anywhere}
        typeof msg.result.protocolVersion!=="string"||
        typeof msg.result.hostInfo?.name!=="string"||
        typeof msg.result.hostCapabilities!=="object"||
-       msg.result.hostCapabilities===null){
+       msg.result.hostCapabilities===null||
+       Array.isArray(msg.result.hostCapabilities)){
       show("init","エラー");
       show("status","ホスト初期化応答が不正・失敗。送信なし。");
       return;
     }
-    const context=msg.result.hostContext&&typeof msg.result.hostContext==="object"?
-      msg.result.hostContext:{};
+    const context=msg.result.hostContext&&typeof msg.result.hostContext==="object"&&
+      !Array.isArray(msg.result.hostContext)?msg.result.hostContext:{};
     const names=Object.keys(context)
       .filter(x=>typeof x==="string"&&x.length<=80)
       .sort().slice(0,20);
