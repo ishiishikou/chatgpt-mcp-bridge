@@ -29,3 +29,5 @@ jobs:
         run: node test-lifecycle-ui-offline.cjs
       - name: Thread entrypoint simulated host (offline)
         run: node test-thread-entrypoint-offline.cjs
+      - name: Thread capability diagnostic simulated host (offline; no sending)
+        run: node test-thread-capabilities-offline.cjs
