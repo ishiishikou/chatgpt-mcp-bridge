@@ -118,6 +118,31 @@ badTeardown.docEvents.visibilitychange();
 assert.equal(badTeardown.get("pages"),undefined);
 assert.equal(badTeardown.get("visibility"),undefined);
 
+// Verify an exact allowlisted RPC envelope, not only an absence of forbidden names.
+for(const item of [supported,other,absent,malformed,badMessage,error,early,
+                   replay,badContainers,missingVersion,badTeardown]){
+ assert.equal(item.out[0].jsonrpc,"2.0");
+ assert.equal(item.out[0].method,"ui/initialize");
+ assert.ok(item.out[0].id.startsWith("capdiag-init-"));
+ assert.equal(item.out[0].params.protocolVersion,"2026-01-26");
+ let notifications=0,acks=0;
+ for(const out of item.out.slice(1)){
+   assert.equal(out.jsonrpc,"2.0");
+   if(out.method==="ui/notifications/initialized"){
+     assert.equal(out.id,undefined);
+     notifications++;
+   }else{
+     assert.equal(out.method,undefined);
+     assert.equal(typeof out.id==="string"||typeof out.id==="number",true);
+     assert.equal(JSON.stringify(out.result),"{}");
+     assert.deepEqual(Object.keys(out).sort(),["id","jsonrpc","result"]);
+     acks++;
+   }
+ }
+ assert.ok(notifications<=1);
+ assert.ok(acks<=1);
+}
+console.log("PASS exact allowlisted outgoing JSON-RPC envelopes");
 console.log("PASS versioned build and independent iframe markers");
 console.log("PASS capability advertisement/absence/malformed/host error");
 console.log("PASS lifecycle, late initialize, duplicate event, no message/draft/network");
