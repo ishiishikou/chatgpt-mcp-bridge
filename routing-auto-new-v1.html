@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>自動投稿 routing new v1</title>
+<style>
+:root{font:14px/1.6 system-ui,sans-serif;color-scheme:light dark}body{margin:18px;max-width:720px}
+h2{font-size:18px}dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 12px}
+dd{margin:0;overflow-wrap:anywhere}#status{padding:12px;border:1px solid #8888;border-radius:8px;white-space:pre-wrap}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;max-height:240px;overflow:auto}
+</style></head><body>
+<h2>自動投稿実験 target=new（15秒・1回限り）</h2>
+<p>初期化後15秒で固定の識別文を自動送信します。モード×OS×送信時可視性（visible/hidden）ごとに永続claimは1回限りです。投稿先はホストのルーティングを観測します。</p>
+<p>背景化・終了でiframeが消去／停止された場合、タイマーが成立しない可能性があります。非表示中もiframeとタイマーが残れば送信を試行します。pagehide・teardownを検知した場合は中止し、自動再開しません。閉じたアプリを起動する機能はありません。</p>
+<dl><dt>Run ID</dt><dd id="run">未生成</dd><dt>生成時刻</dt><dd id="generated">未生成</dd>
+<dt>OS（推定）</dt><dd id="device">未確認</dd><dt>mode</dt><dd id="mode">new</dd>
+<dt>残り</dt><dd id="countdown">初期化待ち（15秒）</dd><dt>可視性</dt><dd id="visibility">未確認</dd>
+<dt>ホスト機能</dt><dd id="capabilities">未確認</dd><dt>サーバーログ</dt><dd id="telemetry">未記録</dd></dl>
+<p id="status">ホスト初期化中</p>
+<p>モデルの自己申告は証明になりません。受信チャットのモデル選択表示をユーザーが最終確認してください。ホスト受理とChatGPTへの到達・回答生成は別の観測です。</p>
+<pre id="log" aria-label="ライフサイクルログ"></pre>
+<script>
+(()=>{
+  "use strict";
+  const MODE="new"; // The only behavioral difference between the two resources.
+  const host=window.parent, get=id=>document.getElementById(id);
+  const set=(id,value)=>{get(id).textContent=String(value)};
+  const generatedAt=new Date().toISOString(), mounted=performance.now();
+  const ua=navigator.userAgent||"", platform=navigator.userAgentData?.platform||navigator.platform||"";
+  const device=/iPhone|iPad|iPod/i.test(ua)||(/Mac/i.test(platform)&&navigator.maxTouchPoints>1)
+    ?"iOS":/Windows|Win32|Win64/i.test(platform+" "+ua)?"Windows":"unknown";
+  const runId=typeof crypto.randomUUID==="function"?crypto.randomUUID():null;
+  const inflight=new Map(), queuedLogs=[];
+  let seq=1, initialized=false, serverTools=false, stopped=false, tornDown=false;
+  let started=false, attempted=false, timer=null, deadline=null, intersectionVisible=null;
+  let sentLogs=0, observer=null;
+  const elapsed=()=>Math.min(604800000,Math.max(0,Math.round(performance.now()-mounted)));
+  const visibility=()=>document.visibilityState==="visible"?"visible":
+    document.visibilityState==="hidden"?"hidden":"unknown";
+  const show=text=>set("status",text);
+  set("run",runId||"UUID生成不可（送信しません）");set("generated",generatedAt);
+  set("device",device+"（OS情報から推定・物理端末の認証ではありません）");set("mode",MODE);
+  set("visibility",visibility());
+
+  function request(method,params){
+    return new Promise((resolve,reject)=>{
+      if(tornDown){reject(new Error("teardown"));return;}
+      const id=seq++;
+      const timeout=setTimeout(()=>{
+        inflight.delete(id);reject(new Error("response unknown"));
+      },12000);
+      inflight.set(id,{resolve,reject,timeout});
+      try{host.postMessage({jsonrpc:"2.0",id,method,params},"*");}
+      catch(error){inflight.delete(id);clearTimeout(timeout);reject(error);}
+    });
+  }
+  async function callTool(name,args){
+    const result=await request("tools/call",{name,arguments:args});
+    if(result?.isError)throw new Error("tool failed");
+    const raw=result?.content?.find(item=>item.type==="text")?.text;
+    if(typeof raw!=="string")throw new Error("missing tool JSON");
+    return JSON.parse(raw);
+  }
+  function sendLog(entry){
+    if(!serverTools||tornDown||!runId||device==="unknown"||sentLogs>=64)return;
+    sentLogs++;
+    void callTool("record_routing_event",{mode:MODE,device,run_id:runId,...entry})
+      .then(result=>set("telemetry",result.recorded?"記録応答あり（終了直前は欠落し得ます）":"記録拒否"))
+      .catch(()=>set("telemetry","記録不明／失敗（再試行なし）"));
+  }
+  function log(event){
+    const entry={event,visibility:visibility(),elapsed_ms:elapsed()};
+    const lines=(get("log").textContent+`${entry.elapsed_ms}ms ${event} ${entry.visibility}\n`).split("\n");
+    set("log",lines.slice(-65).join("\n"));
+    if(serverTools)sendLog(entry);
+    else if(!initialized&&queuedLogs.length<64)queuedLogs.push(entry);
+  }
+  function stop(reason){
+    if(stopped||attempted)return;
+    stopped=true;
+    if(timer!==null){clearTimeout(timer);timer=null;}
+    set("countdown","中止（自動再開なし）");show("送信スキップ: "+reason);
+    log("skipped");
+  }
+  function canSend(){
+    return !stopped&&!tornDown&&initialized&&(visibility()==="visible"||visibility()==="hidden");
+  }
+  async function report(token,outcome){
+    try{
+      const result=await callTool("report_routing_probe",{claim_token:token,outcome});
+      show("送信結果: "+outcome+" / 結果記録: "+(result.recorded?"成功":"未確認")+
+           "。自動再試行なし。受信チャットとモデル選択表示を確認してください。");
+    }catch(error){
+      show("送信結果: "+outcome+" / 結果記録は不明。claimは消費済み。自動再試行なし。");
+    }
+  }
+  async function dispatch(){
+    if(started)return;
+    started=true;
+    if(!canSend()){stop("初期化またはライフサイクル条件が未確認");return;}
+    log("claim_requested");
+    let claim;
+    try{
+      claim=await callTool("claim_routing_probe",{mode:MODE,device,run_id:runId,generated_at:generatedAt,phase:visibility()});
+    }catch(error){stop("claim結果が不明／失敗。自動再試行なし");return;}
+    if(claim?.granted!==true){log("claim_denied");stop("claim拒否: "+String(claim?.reason||"unknown"));return;}
+    // A malformed response must not authorize a message. The server slot stays consumed.
+    if(claim.run_id!==runId||typeof claim.claim_token!=="string"||!/^[a-f0-9]{64}$/.test(claim.claim_token)){
+      stop("claim応答が不正。自動再試行なし");return;
+    }
+    // Recheck AFTER awaiting the durable claim; hidden/teardown can race that request.
+    if(!canSend()){
+      stop("claim取得後に終了。claimは消費済み");
+      if(!tornDown)void report(claim.claim_token,"skipped");
+      return;
+    }
+    attempted=true;
+    log("message_attempt");show("ui/messageを1回だけ要求中。結果不明でも再試行しません。");
+    const text="MCP Apps 無害な自動投稿識別テストです。"+
+      ` OS=${device}; mode=${MODE}; 生成時刻=${generatedAt}; Run ID=${runId}。`+
+      "受信したRun IDを返してください。自身のモデルと推論エフォートが確認できる場合だけ記載し、"+
+      "確認できなければ不明と返してください。推測しないでください。追加のツール呼び出しや投稿はしないでください。"+
+      "ユーザーがチャットUIのモデル選択表示を最終確認します。";
+    let outcome="unknown";
+    try{
+      const result=await request("ui/message",{role:"user",content:[{type:"text",text}],
+        _meta:{"openai/message":{target:MODE,send:true}}});
+      if(result?.isError===true)outcome="host_rejected";
+      else if(result&&typeof result==="object"&&!Array.isArray(result))outcome="host_accepted";
+    }catch(error){/* Includes JSON-RPC error, timeout, teardown: never retry. */}
+    log("result");
+    if(!tornDown)await report(claim.claim_token,outcome);
+  }
+  function tick(){
+    if(stopped||tornDown)return;
+    const remaining=Math.max(0,deadline-performance.now());
+    set("countdown",(remaining/1000).toFixed(1)+" 秒");
+    if(remaining===0){timer=null;void dispatch();return;}
+    timer=setTimeout(tick,Math.min(250,remaining));
+  }
+  document.addEventListener("visibilitychange",()=>{
+    set("visibility",visibility());log("visibilitychange");
+    // Observe hidden execution rather than aborting it.
+  });
+  window.addEventListener("pagehide",()=>{log("pagehide");stop("pagehideを検知");});
+  window.addEventListener("message",event=>{
+    if(event.source!==host||event.data?.jsonrpc!=="2.0")return;
+    const data=event.data;
+    if(data.method==="ui/resource-teardown"){
+      // Best effort only: the host may destroy the iframe before this tool call is delivered.
+      log("teardown");stop("teardownを検知");tornDown=true;
+      if(timer!==null)clearTimeout(timer);
+      if(observer)observer.disconnect();
+      for(const pending of inflight.values()){
+        clearTimeout(pending.timeout);pending.reject(new Error("teardown"));
+      }
+      inflight.clear();
+      show(attempted?"送信要求後にteardown。結果不明の場合も再試行しません。":"teardown。送信しません。");
+      if(data.id!==undefined)host.postMessage({jsonrpc:"2.0",id:data.id,result:{}},"*");
+      return;
+    }
+    if(data.id!==undefined&&inflight.has(data.id)){
+      const pending=inflight.get(data.id);inflight.delete(data.id);clearTimeout(pending.timeout);
+      if(data.error)pending.reject(new Error("host error"));else pending.resolve(data.result);
+    }
+  });
+  if(typeof IntersectionObserver==="function"){
+    observer=new IntersectionObserver(entries=>{
+      intersectionVisible=entries.some(entry=>entry.isIntersecting&&entry.intersectionRatio>0);
+      // Intersection is telemetry only for this experiment.
+    });
+    observer.observe(document.documentElement);
+  }else{intersectionVisible=null; /* optional telemetry */}
+  // A hidden host iframe can still initialize on some platforms.
+  if(!runId||device==="unknown")stop("OSまたは安全なRun IDを確認できません");
+  request("ui/initialize",{
+    appInfo:{name:"Isolated automatic routing probe",version:"1.0.0"},
+    appCapabilities:{availableDisplayModes:["inline"]},protocolVersion:"2026-01-26"
+  }).then(init=>{
+    if(tornDown)return;
+    initialized=true;
+    const caps=init?.hostCapabilities;
+    const object=value=>value!==null&&typeof value==="object"&&!Array.isArray(value);
+    serverTools=object(caps?.serverTools);
+    const text=caps?.message?.text===true||object(caps?.message?.text);
+    const routing=object(caps?.experimental?.["openai/message"]);
+    set("capabilities",`serverTools=${serverTools} / message.text=${text} / openai/message=${routing}`);
+    host.postMessage({jsonrpc:"2.0",method:"ui/notifications/initialized"},"*");
+    for(const entry of queuedLogs.splice(0))sendLog(entry);
+    log("initialized");
+    if(!serverTools){set("telemetry","serverTools非対応");stop("serverTools非対応。永続claimを取得できません");return;}
+    if(!text||!routing){stop("message.text / openai/message ホスト機能が不足または未確認");return;}
+    if(stopped)return;
+    deadline=performance.now()+15000;log("timer_started");
+    show("初期化成功。15秒後にclaim取得し、固定識別文を自動送信します。");tick();
+  }).catch(()=>stop("ホスト初期化失敗／応答不明"));
+})();
+</script></body></html>
