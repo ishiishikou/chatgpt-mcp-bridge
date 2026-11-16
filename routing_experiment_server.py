@@ -28,7 +28,7 @@ apps.add_html_resource(lifecycle.URI, lifecycle.HTML, title="MCP Apps lifecycle 
 
 @apps.tool(resource_uri=URIS["active"], description=(
     "SIDE EFFECT: rendering this UI automatically requests one fixed harmless user message "
-    "after 15 seconds, target=active, send=true. Consumes the persistent mode/OS/visibility claim even "
+    "after 15 seconds, target=active, send=true. Consumes the Run ID claim (30s same-scope cooldown) even "
     "if delivery is unknown. Teardown/capability failures skip. Use only for this experiment."))
 def show_auto_active_probe(ctx: Context) -> str:
     return "AUTO routing experiment: active. Rendering starts a 15-second one-attempt timer."
@@ -37,7 +37,7 @@ def show_auto_active_probe(ctx: Context) -> str:
 @apps.tool(resource_uri=URIS["new"], description=(
     "SIDE EFFECT: rendering this UI automatically requests one fixed harmless user message "
     "in a NEW chat after 15 seconds, target=new, send=true. Consumes the persistent mode/OS "
-    "claim even if delivery is unknown. Teardown/capability failures skip. Use only for this experiment."))
+    "Run ID even if delivery is unknown. Teardown/capability failures skip. Use only for this experiment."))
 def show_auto_new_probe(ctx: Context) -> str:
     return "AUTO routing experiment: new. Rendering starts a 15-second one-attempt timer."
 
@@ -67,7 +67,7 @@ def record_routing_event(ctx: Context, mode: str, device: str, run_id: str,
 
 
 mcp.add_tool(claim_routing_probe, meta=APP_ONLY, description=(
-    "App-only SIDE EFFECT: permanently consume one mode/OS/visibility slot, authorizing one automatic "
+    "App-only SIDE EFFECT: permanently consume the Run ID, with 30s same-scope cooldown; authorize one "
     "ui/message attempt. Never regrants, including a lost response. No recipient authentication."))
 mcp.add_tool(report_routing_probe, meta=APP_ONLY, description=(
     "App-only: record one host result with its claim token; never resend or release a claim."))
