@@ -62,23 +62,57 @@ class RoutingStoreTests(unittest.TestCase):
             with self.subTest(outcome=outcome):
                 with tempfile.TemporaryDirectory() as directory:
                     store = RoutingStore(Path(directory) / self.path.name)
-                    result = store.claim("active", "iOS", str(uuid4()), "2026-11-15T23:00:00Z")
+                    run = str(uuid4())
+                    result = store.claim("active", "iOS", run, "2026-11-15T23:00:00Z")
                     self.assertTrue(store.report(result["claim_token"], outcome)["recorded"])
                     self.assertFalse(store.report(result["claim_token"], "host_accepted")["recorded"])
                     self.assertEqual(store.claim("active", "iOS", str(uuid4()),
                                                  "2026-11-15T23:00:00Z")["reason"], "cooldown")
+                    # Outcome reporting never releases the Run ID, even after
+                    # restart, cooldown expiry or a move to another scope.
+                    advanced = datetime.now(timezone.utc) + timedelta(days=1)
+                    with patch("routing_experiment_store.utcnow", return_value=advanced):
+                        restarted = RoutingStore(store.path)
+                        for mode in ("active", "new"):
+                            for device in ("iOS", "Windows"):
+                                for phase in ("visible", "hidden"):
+                                    self.assertEqual(restarted.claim(
+                                        mode, device, run, "2026-11-15T23:00:00Z", phase
+                                    )["reason"], "already_claimed")
 
     def test_cooldown_expires_then_new_run_is_allowed(self):
         first_run = str(uuid4())
-        self.assertTrue(self.claim(run_id=first_run)["granted"])
-        denied = self.claim()
-        self.assertEqual(denied["reason"], "cooldown")
-        self.assertGreaterEqual(denied["retry_after_seconds"], 1)
-        advanced = datetime.now(timezone.utc) + timedelta(seconds=31)
-        with patch("routing_experiment_store.utcnow", return_value=advanced):
-            retry = self.claim()
+        next_run = str(uuid4())
+        start = datetime(2026, 11, 16, tzinfo=timezone.utc)
+        with patch("routing_experiment_store.utcnow", return_value=start):
+            self.assertTrue(self.claim(run_id=first_run)["granted"])
+        with patch("routing_experiment_store.utcnow", return_value=start + timedelta(milliseconds=29999)):
+            denied = self.claim(run_id=next_run)
+            self.assertEqual(denied["reason"], "cooldown")
+            self.assertEqual(denied["retry_after_seconds"], 1)
+        with patch("routing_experiment_store.utcnow", return_value=start + timedelta(seconds=30)):
+            # A cooldown denial must not consume the new Run ID.
+            retry = RoutingStore(self.path).claim("active", "iOS", next_run, "2026-11-15T23:00:00Z")
             self.assertTrue(retry["granted"], retry)
             self.assertEqual(self.claim(run_id=first_run)["reason"], "already_claimed")
+
+    def test_skipped_claim_keeps_original_phase_cooldown_and_hidden_is_independent(self):
+        """UI skips a visible claim after phase change; hidden B stays independent."""
+        start = datetime(2026, 11, 16, tzinfo=timezone.utc)
+        with patch("routing_experiment_store.utcnow", return_value=start):
+            visible_run = str(uuid4())
+            visible = self.claim(run_id=visible_run)
+            self.assertTrue(self.store.report(visible["claim_token"], "skipped")["recorded"])
+            hidden_run = str(uuid4())
+            hidden = self.store.claim("active", "iOS", hidden_run, "2026-11-15T23:00:00Z", "hidden")
+            self.assertTrue(hidden["granted"])
+            self.assertEqual(self.claim()["reason"], "cooldown")
+            self.assertEqual(self.store.claim("active", "iOS", str(uuid4()),
+                                             "2026-11-15T23:00:00Z", "hidden")["reason"], "cooldown")
+        with sqlite3.connect(self.path) as db:
+            rows = db.execute("SELECT run_id,phase,outcome FROM claims").fetchall()
+        self.assertCountEqual(rows, [(visible_run, "visible", "skipped"),
+                                     (hidden_run, "hidden", "unknown")])
 
     def test_cooldown_is_scoped_by_mode_device_phase(self):
         self.assertTrue(self.store.claim("new","iOS",str(uuid4()),
