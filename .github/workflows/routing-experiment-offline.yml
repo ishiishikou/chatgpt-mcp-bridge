@@ -1,0 +1,42 @@
+name: Routing experiment offline tests
+
+on:
+  pull_request:
+    paths:
+      - 'routing_experiment_server.py'
+      - 'routing_experiment_store.py'
+      - 'routing-auto-*-v1.html'
+      - 'test_routing_experiment.py'
+      - 'test_routing_ui_offline.cjs'
+      - 'lifecycle_server.py'
+      - 'lifecycle-display-v1.html'
+      - 'requirements.txt'
+      - '.github/workflows/routing-experiment-offline.yml'
+  push:
+    paths:
+      - 'routing_experiment_server.py'
+      - 'routing_experiment_store.py'
+      - 'routing-auto-*-v1.html'
+      - 'test_routing_experiment.py'
+      - 'test_routing_ui_offline.cjs'
+      - '.github/workflows/routing-experiment-offline.yml'
+permissions:
+  contents: read
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install MCP dependency
+        run: pip install -r requirements.txt
+      - name: MCP server and ledger tests
+        run: python -W ignore -m unittest -v test_routing_experiment.py
+      - name: Simulated MCP Apps host routing and lifecycle tests
+        run: node test_routing_ui_offline.cjs
