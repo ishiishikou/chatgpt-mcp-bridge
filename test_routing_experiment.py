@@ -5,6 +5,7 @@ import sqlite3
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
@@ -17,26 +18,26 @@ class RoutingStoreTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.path = Path(self.tmp.name) / "routing-experiment-v1.sqlite3"
+        self.path = Path(self.tmp.name) / "routing-experiment-v2.sqlite3"
         self.store = RoutingStore(self.path)
 
     def claim(self, mode="active", device="iOS", run_id=None):
         return self.store.claim(mode, device, run_id or str(uuid4()), "2026-11-15T23:00:00.000Z")
 
-    def test_lazy_empty_and_four_independent_slots(self):
+    def test_first_claim_of_each_mode_device_is_independent(self):
         self.assertFalse(self.path.exists())
         for mode in ("active", "new"):
             for device in ("iOS", "Windows"):
                 self.assertTrue(self.claim(mode, device)["granted"])
-                self.assertEqual(self.claim(mode, device)["reason"], "already_claimed")
+                self.assertEqual(self.claim(mode, device)["reason"], "cooldown")
 
-    def test_same_mode_device_visible_and_hidden_are_distinct_one_shot_slots(self):
+    def test_same_mode_device_visible_and_hidden_have_independent_cooldowns(self):
         run_visible = str(uuid4())
         run_hidden = str(uuid4())
         self.assertTrue(self.store.claim("new", "iOS", run_visible, "2026-11-15T23:00:00Z", "visible")["granted"])
         self.assertTrue(self.store.claim("new", "iOS", run_hidden, "2026-11-15T23:00:00Z", "hidden")["granted"])
-        self.assertFalse(self.store.claim("new", "iOS", str(uuid4()), "2026-11-15T23:00:00Z", "visible")["granted"])
-        self.assertFalse(self.store.claim("new", "iOS", str(uuid4()), "2026-11-15T23:00:00Z", "hidden")["granted"])
+        self.assertEqual(self.store.claim("new", "iOS", str(uuid4()), "2026-11-15T23:00:00Z", "visible")["reason"], "cooldown")
+        self.assertEqual(self.store.claim("new", "iOS", str(uuid4()), "2026-11-15T23:00:00Z", "hidden")["reason"], "cooldown")
         self.assertFalse(self.store.claim("new", "Windows", str(uuid4()), "2026-11-15T23:00:00Z", "invisible")["granted"])
 
     def test_parallel_regeneration_grants_exactly_one(self):
@@ -52,11 +53,11 @@ class RoutingStoreTests(unittest.TestCase):
         self.assertTrue(self.claim(run_id=run)["granted"])
         self.store = RoutingStore(self.path)
         self.assertFalse(self.claim(run_id=run)["granted"])
-        self.assertFalse(self.claim()["granted"])
+        self.assertEqual(self.claim()["reason"], "cooldown")
         # Reusing a Run ID for a different slot must not grant another attempt.
         self.assertFalse(self.claim("new", run_id=run)["granted"])
 
-    def test_unknown_and_each_result_permanently_consume_slot(self):
+    def test_unknown_and_each_result_permanently_consume_run_id(self):
         for outcome in ("unknown", "host_accepted", "host_rejected", "skipped"):
             with self.subTest(outcome=outcome):
                 with tempfile.TemporaryDirectory() as directory:
@@ -64,8 +65,30 @@ class RoutingStoreTests(unittest.TestCase):
                     result = store.claim("active", "iOS", str(uuid4()), "2026-11-15T23:00:00Z")
                     self.assertTrue(store.report(result["claim_token"], outcome)["recorded"])
                     self.assertFalse(store.report(result["claim_token"], "host_accepted")["recorded"])
-                    self.assertFalse(store.claim("active", "iOS", str(uuid4()),
-                                                 "2026-11-15T23:00:00Z")["granted"])
+                    self.assertEqual(store.claim("active", "iOS", str(uuid4()),
+                                                 "2026-11-15T23:00:00Z")["reason"], "cooldown")
+
+    def test_cooldown_expires_then_new_run_is_allowed(self):
+        first_run = str(uuid4())
+        self.assertTrue(self.claim(run_id=first_run)["granted"])
+        denied = self.claim()
+        self.assertEqual(denied["reason"], "cooldown")
+        self.assertGreaterEqual(denied["retry_after_seconds"], 1)
+        advanced = datetime.now(timezone.utc) + timedelta(seconds=31)
+        with patch("routing_experiment_store.utcnow", return_value=advanced):
+            retry = self.claim()
+            self.assertTrue(retry["granted"], retry)
+            self.assertEqual(self.claim(run_id=first_run)["reason"], "already_claimed")
+
+    def test_cooldown_is_scoped_by_mode_device_phase(self):
+        self.assertTrue(self.store.claim("new","iOS",str(uuid4()),
+                                         "2026-11-15T23:00:00Z","visible")["granted"])
+        self.assertTrue(self.store.claim("new","iOS",str(uuid4()),
+                                         "2026-11-15T23:00:00Z","hidden")["granted"])
+        self.assertTrue(self.store.claim("new","Windows",str(uuid4()),
+                                         "2026-11-15T23:00:00Z","visible")["granted"])
+        self.assertTrue(self.store.claim("active","iOS",str(uuid4()),
+                                         "2026-11-15T23:00:00Z","visible")["granted"])
 
     def test_bad_inputs_never_create_database(self):
         for args in (("bad", "iOS", str(uuid4()), "2026-11-15T23:00:00Z"),
@@ -156,7 +179,7 @@ class RoutingServerTests(unittest.IsolatedAsyncioTestCase):
         from mcp.shared.memory import create_client_server_memory_streams
         import routing_experiment_server as server
         with tempfile.TemporaryDirectory() as directory:
-            store = RoutingStore(Path(directory) / "routing-experiment-v1.sqlite3")
+            store = RoutingStore(Path(directory) / "routing-experiment-v2.sqlite3")
             with patch.object(server, "store", store):
                 async with create_client_server_memory_streams() as (client, transport):
                     async with anyio.create_task_group() as group:
