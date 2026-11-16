@@ -8,7 +8,7 @@ dd{margin:0;overflow-wrap:anywhere}#status{padding:12px;border:1px solid #8888;b
 pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;max-height:240px;overflow:auto}
 </style></head><body>
 <h2>自動投稿実験 target=new（15秒・1回限り）</h2>
-<p>初期化後15秒で固定の識別文を自動送信します。モード×OS×送信時可視性（visible/hidden）ごとに永続claimは1回限りです。投稿先はホストのルーティングを観測します。</p>
+<p>初期化後15秒で固定の識別文を自動送信します。Run IDごとに1回だけ送信を試みます。再生成による重複を抑えるため同じモード・OS・可視状態の別試行には30秒の間隔を設けます。投稿先はホストのルーティングを観測します。</p>
 <p>背景化・終了でiframeが消去／停止された場合、タイマーが成立しない可能性があります。非表示中もiframeとタイマーが残れば送信を試行します。pagehide・teardownを検知した場合は中止し、自動再開しません。閉じたアプリを起動する機能はありません。</p>
 <dl><dt>Run ID</dt><dd id="run">未生成</dd><dt>生成時刻</dt><dd id="generated">未生成</dd>
 <dt>OS（推定）</dt><dd id="device">未確認</dd><dt>mode</dt><dd id="mode">new</dd>
