@@ -1,4 +1,4 @@
-"""A separate, lazy SQLite ledger: eight lifetime slots (mode x OS x visible/hidden), never regrant or reset.
+"""A separate, lazy SQLite ledger: one attempt per Run ID plus a short anti-duplicate cooldown.
 
 No retired ledger imports or environment-controlled paths. App-only visibility is
 a host permission boundary, not authentication against arbitrary MCP clients.
@@ -7,10 +7,12 @@ import secrets
 import sqlite3
 from contextlib import closing, contextmanager
 from datetime import datetime, timezone
+from math import ceil
 from pathlib import Path
 from uuid import UUID
 
-DB_NAME = "routing-experiment-v1.sqlite3"
+DB_NAME = "routing-experiment-v2.sqlite3"
+COOLDOWN_SECONDS = 30
 DEFAULT_DB = Path(__file__).resolve().parent / "state" / DB_NAME
 MODES = ("active", "new")
 DEVICES = ("iOS", "Windows")
@@ -35,8 +37,11 @@ def valid_time(value):
         return False
 
 
+def utcnow():
+    return datetime.now(timezone.utc)
+
 def now():
-    return datetime.now(timezone.utc).isoformat()
+    return utcnow().isoformat()
 
 
 class RoutingStore:
@@ -61,16 +66,17 @@ class RoutingStore:
                     mode TEXT NOT NULL CHECK(mode IN ('active','new')),
                     device TEXT NOT NULL CHECK(device IN ('iOS','Windows')),
                     phase TEXT NOT NULL CHECK(phase IN ('visible','hidden')),
-                    run_id TEXT NOT NULL UNIQUE, generated_at TEXT NOT NULL,
+                    run_id TEXT NOT NULL PRIMARY KEY, generated_at TEXT NOT NULL,
                     claim_token TEXT NOT NULL UNIQUE, claimed_at TEXT NOT NULL,
                     outcome TEXT NOT NULL DEFAULT 'unknown', reported_at TEXT,
-                    PRIMARY KEY(mode,device,phase))""")
+                    CHECK(length(run_id) = 36))""")
                 db.execute("""CREATE TABLE IF NOT EXISTS events (
                     id INTEGER PRIMARY KEY, run_id TEXT NOT NULL,
                     mode TEXT NOT NULL, device TEXT NOT NULL, event TEXT NOT NULL,
                     visibility TEXT NOT NULL, elapsed_ms INTEGER NOT NULL,
                     recorded_at TEXT NOT NULL)""")
                 db.execute("CREATE INDEX IF NOT EXISTS events_run ON events(run_id)")
+                db.execute("CREATE INDEX IF NOT EXISTS claims_scope_time ON claims(mode,device,phase,claimed_at)")
                 yield db
 
     def claim(self, mode, device, run_id, generated_at, phase="visible"):
@@ -80,6 +86,21 @@ class RoutingStore:
         token = secrets.token_hex(32)
         try:
             with self._transaction() as db:
+                # Replaying the same widget Run ID is never eligible again.
+                if db.execute("SELECT 1 FROM claims WHERE run_id=?", (run_id,)).fetchone():
+                    return {"granted": False, "reason": "already_claimed"}
+                # Brief cooldown suppresses iframe re-mount storms but permits
+                # deliberate later tests in the same mode, OS and visibility.
+                recent = db.execute("""SELECT claimed_at FROM claims
+                    WHERE mode=? AND device=? AND phase=?
+                    ORDER BY claimed_at DESC LIMIT 1""",
+                    (mode, device, phase)).fetchone()
+                if recent:
+                    remaining = COOLDOWN_SECONDS - (
+                        utcnow() - datetime.fromisoformat(recent[0])).total_seconds()
+                    if remaining > 0:
+                        return {"granted": False, "reason": "cooldown",
+                                "retry_after_seconds": ceil(remaining)}
                 try:
                     db.execute("""INSERT INTO claims
                         (mode,device,phase,run_id,generated_at,claim_token,claimed_at)
