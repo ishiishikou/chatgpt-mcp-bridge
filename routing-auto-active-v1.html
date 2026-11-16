@@ -31,7 +31,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;max-height:240px;
   const inflight=new Map(), queuedLogs=[];
   let seq=1, initialized=false, serverTools=false, stopped=false, tornDown=false;
   let started=false, attempted=false, timer=null, deadline=null, intersectionVisible=null;
-  let sentLogs=0, observer=null;
+  let sentLogs=0, observer=null, visibilityVersion=0;
   const elapsed=()=>Math.min(604800000,Math.max(0,Math.round(performance.now()-mounted)));
   const visibility=()=>document.visibilityState==="visible"?"visible":
     document.visibilityState==="hidden"?"hidden":"unknown";
@@ -96,19 +96,20 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;max-height:240px;
     if(started)return;
     started=true;
     if(!canSend()){stop("初期化またはライフサイクル条件が未確認");return;}
+    const claimPhase=visibility(), claimVisibilityVersion=visibilityVersion;
     log("claim_requested");
     let claim;
     try{
-      claim=await callTool("claim_routing_probe",{mode:MODE,device,run_id:runId,generated_at:generatedAt,phase:visibility()});
+      claim=await callTool("claim_routing_probe",{mode:MODE,device,run_id:runId,generated_at:generatedAt,phase:claimPhase});
     }catch(error){stop("claim結果が不明／失敗。自動再試行なし");return;}
     if(claim?.granted!==true){log("claim_denied");stop("claim拒否: "+String(claim?.reason||"unknown"));return;}
     // A malformed response must not authorize a message. The server slot stays consumed.
     if(claim.run_id!==runId||typeof claim.claim_token!=="string"||!/^[a-f0-9]{64}$/.test(claim.claim_token)){
       stop("claim応答が不正。自動再試行なし");return;
     }
-    // Recheck AFTER awaiting the durable claim; hidden/teardown can race that request.
-    if(!canSend()){
-      stop("claim取得後に終了。claimは消費済み");
+    // A phase transition (even away and back) invalidates this consumed claim.
+    if(!canSend()||visibility()!==claimPhase||visibilityVersion!==claimVisibilityVersion){
+      stop("claim取得後に終了または可視状態が変更。claimは消費済み");
       if(!tornDown)void report(claim.claim_token,"skipped");
       return;
     }
@@ -123,9 +124,12 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;max-height:240px;
     try{
       const result=await request("ui/message",{role:"user",content:[{type:"text",text}],
         _meta:{"openai/message":{target:MODE,send:true}}});
-      if(result?.isError===true)outcome="host_rejected";
-      else if(result&&typeof result==="object"&&!Array.isArray(result))outcome="host_accepted";
-    }catch(error){/* Includes JSON-RPC error, timeout, teardown: never retry. */}
+      // A generic failure does not establish whether the message was executed.
+      if(result&&typeof result==="object"&&!Array.isArray(result)&&result.isError!==true)outcome="host_accepted";
+    }catch(error){
+      if(error?.hostRejected===true)outcome="host_rejected";
+      // Transport failure, timeout and ambiguous host errors remain unknown. Never retry.
+    }
     log("result");
     if(!tornDown)await report(claim.claim_token,outcome);
   }
@@ -137,6 +141,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;max-height:240px;
     timer=setTimeout(tick,Math.min(250,remaining));
   }
   document.addEventListener("visibilitychange",()=>{
+    visibilityVersion++;
     set("visibility",visibility());log("visibilitychange");
     // Observe hidden execution rather than aborting it.
   });
@@ -159,7 +164,13 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;max-height:240px;
     }
     if(data.id!==undefined&&inflight.has(data.id)){
       const pending=inflight.get(data.id);inflight.delete(data.id);clearTimeout(pending.timeout);
-      if(data.error)pending.reject(new Error("host error"));else pending.resolve(data.result);
+      if(data.error){
+        const error=new Error("host error");
+        // Invalid request / unsupported method / invalid params establish refusal.
+        // Keep only the classification; never retain host message, data or raw code in logs.
+        error.hostRejected=[-32600,-32601,-32602].includes(data.error.code);
+        pending.reject(error);
+      }else pending.resolve(data.result);
     }
   });
   if(typeof IntersectionObserver==="function"){
